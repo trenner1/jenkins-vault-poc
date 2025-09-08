@@ -1,0 +1,3 @@
+keys/jenkins-oidc.key
+.vault-token
+.vscode/
