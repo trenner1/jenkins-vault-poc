@@ -1,11 +1,11 @@
 # Jenkins ↔ Vault JWT Authentication POC
 
-A production-ready proof of concept demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **licensing-efficient entity management**.
+A production-ready proof of concept demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **logical workload grouping**.
 
 ## What This POC Proves
 
 - **Zero Entity Churning**: Same entity/alias reused across team member logins  
-- **Licensing Efficient**: Entity count scales with teams, not developers  
+- **Logical Grouping**: Entity count scales with teams, organizing identical workloads efficiently  
 - **Production Ready**: Raft storage, proper policies, automation, persistence  
 - **Secure**: Job-scoped access with dynamic policy templating  
 - **Scalable**: Supports large monorepos with multiple development teams  
@@ -15,7 +15,7 @@ A production-ready proof of concept demonstrating **team-based JWT authenticatio
 ## Key Features
 
 - **JWT Authentication**: Jenkins → Vault using self-signed JWTs
-- **Team-Based Access**: One entity per team (not per developer) for licensing efficiency
+- **Team-Based Access**: One entity per team groups identical workloads logically
 - **No Entity Churning**: Proven entity/alias reuse within teams
 - **Job-Scoped Secrets**: Dynamic policy templating based on pipeline context
 - **Persistent Data**: Survives container restarts with auto-unseal
@@ -38,22 +38,22 @@ Team Beta (Backend)      →  Entity: jenkins-dev  →  Secrets: kv/dev/apps/tea
 
 **Benefits:**
 - **No Churning**: Same entity reused by all team members
-- **Licensing Efficient**: Entity count = number of teams (not developers)
+- **Logical Organization**: Entity count = number of teams (groups identical workloads)
 - **Secure**: Job-scoped access via policy templating
 - **Scalable**: Supports large organizations with multiple teams
 
 ## Comparison with Other Approaches
 
-| Approach | Entities Created | Licensing Impact | Team Isolation | Complexity |
+| Approach | Entities Created | Workload Organization | Team Isolation | Complexity |
 |----------|------------------|------------------|----------------|------------|
 | **Per Developer** | 1 per developer | High | Excellent | Medium |
 | **Single Shared** | 1 total | Minimal | None | Low |
 | **Per Team (This POC)** | 1 per team | Low | Good | Medium |
 
 ### Why Team-Based is Optimal:
-- **Licensing**: Pay for teams, not individual developers
+- **Logical Grouping**: Groups identical workloads by team function
 - **Security**: Natural isolation boundaries align with org structure  
-- **Scalability**: Linear growth (teams) vs exponential (developers)
+- **Scalability**: Linear growth with workload types rather than individual users
 - **Management**: Easier to audit and manage team-based access
 
 ## Quick Start
@@ -284,7 +284,7 @@ jenkins-vault-poc/
 
 2. **Map Okta groups to teams**:
    - Okta group `team-alpha` → JWT `sub: "team-alpha"`
-   - Results in 1 entity per team (licensing efficient)
+   - Results in 1 entity per team (logically groups identical workloads)
 
 3. **Implement proper key rotation**:
    - Rotate JWT signing keys regularly
