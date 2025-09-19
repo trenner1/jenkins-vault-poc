@@ -1,0 +1,17 @@
+vault write auth/jenkins-jwt/role/dev-builds -<<'JSON'
+{
+  "role_type": "jwt",
+  "user_claim": "jenkins_job",              
+  "bound_issuer": "http://localhost:8080",
+  "bound_audiences": "vault",
+
+  "bound_claims_type": "string",
+  "bound_claims": { "env": "dev" },
+
+  "token_policies": "jenkins-dev",
+  "token_ttl": "20m",
+  "token_max_ttl": "20m",
+  "token_no_default_policy": true,
+  "token_type": "service"
+}
+JSON

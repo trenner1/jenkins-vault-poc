@@ -2,3 +2,10 @@ keys/jenkins-oidc.key
 .vault-token
 .vscode/
 data/
+
+# Sensitive environment and vault files
+.env
+vault-keys.txt
+*.key
+*.pem
+.vault-token
