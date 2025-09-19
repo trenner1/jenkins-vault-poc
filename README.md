@@ -81,7 +81,7 @@ Data is preserved in `./data/` directory.
 ## Access URLs
 - **Jenkins**: http://localhost:8080
 - **Vault UI**: http://localhost:8200 
-- **Root Token**: `<VAULT_ROOT_TOKEN>` (stored in `vault-keys.txt`)
+- **Root Token**: `<found in vault-keys.txt>` (stored in `vault-keys.txt`)
 
 ## Data Persistence
 - **Jenkins**: `./data/jenkins_home/` (preserves all Jenkins config)
@@ -178,7 +178,7 @@ docker exec vault vault operator unseal <key3>
 ### 3) Configure Vault
 ```bash
 export VAULT_ADDR="http://localhost:8200"
-export VAULT_TOKEN="<root-token>"
+export VAULT_TOKEN="<your-root-token-from-vault-keys.txt>"
 
 # Run setup script
 cd vault/scripts && ./setup_vault.sh
@@ -204,7 +204,7 @@ This is normal! Vault seals itself on restart for security.
 ```bash
 # Check JWT role configuration
 export VAULT_ADDR="http://localhost:8200"
-export VAULT_TOKEN="<VAULT_ROOT_TOKEN>"
+export VAULT_TOKEN="<your-root-token-from-vault-keys.txt>"
 vault read auth/jenkins-jwt/role/dev-builds
 
 # Verify claim mappings are set
