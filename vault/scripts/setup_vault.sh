@@ -9,7 +9,7 @@ PUBKEY_PATH="${PUBKEY_PATH:-../../keys/jenkins-oidc.pub}" # adjust if your path 
 POLICY_PATH="${POLICY_PATH:-../policies/jenkins-dev.hcl}"
 
 # 0) Optional: ensure KV engine exists at "kv/"
-vault secrets list -format=json | jq -e '."kv/".type=="kv"' >/dev/null 2>&1 || vault secrets enable -path=kv kv
+vault secrets list -format=json | jq -e '."kv/".type=="kv"' >/dev/null 2>&1 || vault secrets enable -path=kv kv-v2
 
 # 1) Enable JWT auth
 vault auth list | grep -q '^jenkins-jwt/' || vault auth enable -path=jenkins-jwt jwt
@@ -23,26 +23,6 @@ vault write auth/jenkins-jwt/config \
 vault policy write jenkins-dev "$POLICY_PATH"
 
 # 4) Create the role (licensing-safe: one entity via sub=jenkins-dev)
-# vault write auth/jenkins-jwt/role/dev-builds -<<'JSON'
-# {
-#   "role_type": "jwt",
-#   "user_claim": "sub",
-#   "bound_issuer": "http://localhost:8080",
-#   "bound_audiences": "vault",
-
-#   "bound_claims_type": "string",
-#   "bound_claims": { "env": "dev" },
-
-#   "claim_mappings": { "jenkins_job": "job", "env": "env" },
-
-#   "token_policies": "jenkins-dev",
-#   "token_ttl": "20m",
-#   "token_max_ttl": "20m",
-#   "token_no_default_policy": true,
-#   "token_type": "default"
-# }
-# JSON
-
 vault write auth/jenkins-jwt/role/dev-builds -<<'JSON'
 {
   "role_type": "jwt",
