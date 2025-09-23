@@ -52,29 +52,13 @@ pipeline {
             IAT=$(date +%s); EXP=$((IAT+900))
             JOB="${JOB_NAME:-}"; REPO="${GIT_URL:-}"; BR="${BRANCH_NAME:-}"
             BID="${BUILD_ID:-}"; COM="${GIT_COMMIT:-}"
-            
-            # Map Jenkins role parameter to Vault claim value
-            case "${VAULT_ROLE}" in
-              "admin-builds")
-                ROLE_CLAIM="admin"
-                ;;
-              "developer-builds")
-                ROLE_CLAIM="developer"
-                ;;
-              "readonly-builds")
-                ROLE_CLAIM="readonly"
-                ;;
-              *)
-                echo "Unknown role: ${VAULT_ROLE}"; exit 1
-                ;;
-            esac
 
             jq -n \
               --arg iss "http://localhost:8080" \
               --arg sub "jenkins-dev" \
               --arg aud "vault" \
               --arg env "${ENVIRONMENT}" \
-              --arg role "$ROLE_CLAIM" \
+              --arg role "${VAULT_ROLE}" \
               --arg job "$JOB" \
               --arg repo "$REPO" \
               --arg branch "$BR" \
@@ -152,8 +136,6 @@ pipeline {
 
             printf "VAULT_TOKEN=%s\n" "$CHILD" > .vault_token
             echo "✅ Successfully created child token with policy: $POLICY"
-            echo "🔍 JWT role claim used: $ROLE_CLAIM"
-            echo "🎯 Vault role selected: ${VAULT_ROLE}"
           '''
         }
       }
