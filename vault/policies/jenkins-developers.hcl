@@ -1,19 +1,19 @@
-# Developer policy - read/write access to job-scoped secrets
-# Access to environment-based paths scoped by project
-path "kv/data/+/apps/+/*" {
+# Developer policy - read/write access to project-scoped secrets
+# Access restricted to the project specified in token metadata
+path "kv/data/+/apps/{{token.meta.project}}/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
-path "kv/metadata/+/apps/+/*" {
+path "kv/metadata/+/apps/{{token.meta.project}}/*" {
   capabilities = ["read", "list"]
 }
 
-# Legacy job-based paths for backward compatibility
-path "kv/data/jobs/+/*" {
+# Legacy job-based paths for backward compatibility (project-scoped)
+path "kv/data/jobs/{{token.meta.project}}/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
-path "kv/metadata/jobs/+/*" {
+path "kv/metadata/jobs/{{token.meta.project}}/*" {
   capabilities = ["read", "list"]
 }
 

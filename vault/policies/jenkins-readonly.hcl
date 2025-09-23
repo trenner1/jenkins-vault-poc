@@ -1,19 +1,19 @@
-# Readonly policy - read-only access to job-scoped secrets  
-# Access to environment-based paths scoped by project
-path "kv/data/+/apps/+/*" {
+# Readonly policy - read-only access to project-scoped secrets
+# Access restricted to the project specified in token metadata
+path "kv/data/+/apps/{{token.meta.project}}/*" {
   capabilities = ["read"]
 }
 
-path "kv/metadata/+/apps/+/*" {
+path "kv/metadata/+/apps/{{token.meta.project}}/*" {
   capabilities = ["read", "list"]
 }
 
-# Legacy job-based paths for backward compatibility
-path "kv/data/jobs/+/*" {
+# Legacy job-based paths for backward compatibility (project-scoped)
+path "kv/data/jobs/{{token.meta.project}}/*" {
   capabilities = ["read"]
 }
 
-path "kv/metadata/jobs/+/*" {
+path "kv/metadata/jobs/{{token.meta.project}}/*" {
   capabilities = ["read", "list"]
 }
 
