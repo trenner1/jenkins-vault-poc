@@ -1,6 +1,6 @@
-# Jenkins ↔ Vault JWT Authentication POC
+# Jenkins ↔ Vault JWT Authentication POC (with Okta Integration)
 
-A production-ready proof of concept demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **logical workload grouping**.
+A production-ready proof of concept demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **logical workload grouping** and **Okta SSO integration**.
 
 ## What This POC Proves
 
@@ -135,7 +135,9 @@ The verification scripts:
   "nbf": 1234567890,                    // Not before
   "exp": 1234568790                     // Expires
 }
-```### Policy Templating
+```
+
+### Policy Templating
 ```hcl
 # Dynamic path based on pipeline name
 path "kv/data/dev/apps/{{identity.entity.aliases.auth_jwt_5f35b701.metadata.job}}/*" {
@@ -152,6 +154,32 @@ path "kv/data/dev/apps/{{identity.entity.aliases.auth_jwt_5f35b701.metadata.job}
 3. Different team login  → New team entity created (if using different team)
 4. No churning          → Entity/alias IDs remain stable within teams
 ```
+
+---
+
+## Okta Integration
+
+This POC includes comprehensive **Okta SSO integration** for production-ready team-based authentication:
+
+### Integration Documentation
+- **[Okta-Vault Integration Guide](okta/okta-vault-integration.md)** - Complete setup for Vault ↔ Okta integration
+- **[Okta SSO Configuration Notes](okta/okta_sso_notes.md)** - SSO setup and configuration details
+
+### Production Flow
+```
+Okta Groups → JWT Claims → Vault Roles → Team-Based Policies
+     ↓              ↓            ↓               ↓
+mobile-team → selected_group → mobile-developers → Mobile secrets
+frontend-team → selected_group → frontend-developers → Frontend secrets  
+backend-team → selected_group → backend-developers → Backend secrets
+devops-team → selected_group → devops-team → DevOps + Shared secrets
+```
+
+### Key Benefits
+- **Single Sign-On**: Users authenticate once via Okta
+- **Group Mapping**: Okta groups automatically map to Vault teams
+- **No User Management**: Team membership managed in Okta, not Vault
+- **Scalable**: Add teams by creating Okta groups + Vault policies
 
 ---
 
@@ -275,8 +303,9 @@ jenkins-vault-poc/
 ├── pipelines/                  # Example pipelines
 │   └── Jenkinsfile.role-selection  # Team-based role selection example
 │
-├── okta/                       # Authentication docs
-│   └── okta_sso_notes.md       # Okta SSO integration notes
+├── okta/                       # Okta SSO integration
+│   ├── okta-vault-integration.md   # Vault ↔ Okta integration guide
+│   └── okta_sso_notes.md       # Okta SSO configuration notes
 │
 └── verification/               # Testing & validation
     ├── verify-no-churn.sh      # Proves no entity churning

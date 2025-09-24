@@ -2,7 +2,7 @@
 
 ## Current Setup
 - **Okta OIDC App**: Configured for Jenkins SSO
-- **Scopes**: `openid email profile groups` ✅
+- **Scopes**: `openid email profile groups` 
 - **Redirect URI**: `http://localhost:8080/securityRealm/finishLogin`
 
 ## Jenkins Configuration for Group Claims
@@ -18,10 +18,10 @@ Create these groups in Okta and assign users:
 
 | Okta Group Name | Maps to Vault Role | Purpose |
 |----------------|-------------------|---------|
-| `jenkins-mobile-developers` | `mobile-developers` | Mobile app team |
-| `jenkins-frontend-developers` | `frontend-developers` | Frontend team |
-| `jenkins-backend-developers` | `backend-developers` | Backend team |
-| `jenkins-devops-team` | `devops-team` | DevOps/Admin team |
+| `mobile-developers` | `mobile-developers` | Mobile app team |
+| `frontend-developers` | `frontend-developers` | Frontend team |
+| `backend-developers` | `backend-developers` | Backend team |
+| `devops-team` | `devops-team` | DevOps/Admin team |
 
 ### 3. Pipeline Integration
 The updated pipeline now:
@@ -65,17 +65,17 @@ Consider updating Vault JWT roles to validate groups:
 # Example: mobile-developers JWT role
 path "auth/jenkins-jwt/role/mobile-developers" {
   bound_claims = {
-    "okta_groups" = "*jenkins-mobile-developers*"
+    "okta_groups" = "*mobile-developers*"
   }
 }
 ```
 
 ## Security Benefits
-✅ **Group-based authorization** instead of user-specific mappings
-✅ **Centralized identity management** through Okta
-✅ **Automatic group updates** when users change teams
-✅ **Audit trail** of group memberships in token metadata
-✅ **Scalable** for large organizations
+**Group-based authorization** instead of user-specific mappings
+**Centralized identity management** through Okta
+**Automatic group updates** when users change teams
+**Audit trail** of group memberships in token metadata
+**Scalable** for large organizations
 
 ## Testing the Integration
 1. User logs into Jenkins via Okta SSO
