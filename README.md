@@ -25,15 +25,10 @@ A production-ready proof of concept demonstrating **team-based JWT authenticatio
 
 ### Team-Based Entity Model
 ```
-Team Alpha (Frontend)     →  Entity: jenkins-dev  →  Secrets: kv/dev/apps/team-alpha-pipeline/*
-├── alice.smith          
-├── bob.jones            
-└── carol.wilson         
-
-Team Beta (Backend)      →  Entity: jenkins-dev  →  Secrets: kv/dev/apps/team-beta-pipeline/*
-├── dave.brown           
-├── eve.taylor           
-└── frank.moore          
+Mobile Team         →  Entity: mobile-developers      →  Secrets: kv/dev/apps/mobile-app/*
+Frontend Team       →  Entity: frontend-developers    →  Secrets: kv/dev/apps/frontend-app/*
+Backend Team        →  Entity: backend-developers     →  Secrets: kv/dev/apps/backend-service/*
+DevOps Team         →  Entity: devops-team            →  Secrets: kv/dev/apps/devops-tools/*
 ```
 
 **Benefits:**
@@ -90,9 +85,15 @@ Data is preserved in `./data/` directory.
 
 ## Vault Configuration
 - **Auth Method**: JWT (`jenkins-jwt/`)
-- **Policy**: `jenkins-dev` (job-scoped access)
-- **Role**: `dev-builds` (for Jenkins pipelines)
-- **Secrets**: Seeded test data in `kv/dev/apps/`
+- **Policy**: One per team:
+    - `mobile-developers.hcl`
+    - `frontend-developers.hcl`
+    - `backend-developers.hcl`
+    - `devops-team.hcl`
+- **Role**: One per team (e.g., `mobile-developers`, `frontend-developers`, `backend-developers`, `devops-team`) for Jenkins pipelines
+- **Entity**: One per team (e.g., `mobile-developers`, `frontend-developers`, `backend-developers`, `devops-team`)
+- **JWT Claims**: `selected_group` field set to team name (e.g., `selected_group: "mobile-developers"`)
+- **Secrets**: Seeded test data in team-specific paths (e.g., `kv/dev/apps/mobile-pipeline/*`)
 
 ## Verification & Testing
 
@@ -100,19 +101,19 @@ Data is preserved in `./data/` directory.
 ```bash
 # Run comprehensive verification test
 ./verification/verify-no-churn.sh
-```
 
-This script:
-1. Records current entity/alias state
-2. Performs real JWT authentication
-3. Verifies same entity/alias IDs are reused
-4. **Proves no churning occurs**
-
-### Demo Team-Based Access
-```bash
 # Show team-based entity management concepts
+./verification/demo-team-entities.sh
+
+# Complete team access demonstration
 ./verification/comprehensive-team-demo.sh
 ```
+
+The verification scripts:
+1. Record current entity/alias state
+2. Perform real JWT authentication with team-based claims
+3. Verify same entity/alias IDs are reused within teams
+4. **Prove no churning occurs within team contexts**
 
 ### Test Pipeline Integration
 1. Access Jenkins: http://localhost:8080
@@ -126,18 +127,15 @@ This script:
 ```json
 {
   "iss": "http://localhost:8080",       // Jenkins issuer
-  "sub": "jenkins-dev",                 // Team identifier (shared)
   "aud": "vault",                       // Vault audience
   "env": "dev",                         // Environment
-  "jenkins_job": "sample-pipeline",     // Pipeline name (mapped to 'job')
-  "build_id": "123",                    // Build number
-  "user": "alice.smith",                // Individual developer
+  "selected_group": "mobile-developers"|"frontend-developers"|"backend-developers"|"devops-team", // Team identifier
+  "jenkins_job": "sample-pipeline",     // Pipeline name (optional)
   "iat": 1234567890,                    // Issued at
+  "nbf": 1234567890,                    // Not before
   "exp": 1234568790                     // Expires
 }
-```
-
-### Policy Templating
+```### Policy Templating
 ```hcl
 # Dynamic path based on pipeline name
 path "kv/data/dev/apps/{{identity.entity.aliases.auth_jwt_5f35b701.metadata.job}}/*" {
@@ -149,10 +147,10 @@ path "kv/data/dev/apps/{{identity.entity.aliases.auth_jwt_5f35b701.metadata.job}
 
 ### Entity Lifecycle
 ```
-1. First JWT login   → Entity created with alias
-2. Same team login   → Same entity reused, alias metadata updated  
-3. Different team    → New entity created (if using different 'sub')
-4. No churning      → Entity/alias IDs remain stable
+1. First team login      → Entity created with team-based alias
+2. Same team member      → Same entity reused, alias metadata updated  
+3. Different team login  → New team entity created (if using different team)
+4. No churning          → Entity/alias IDs remain stable within teams
 ```
 
 ---
@@ -202,25 +200,35 @@ This is normal! Vault seals itself on restart for security.
 
 ### JWT Authentication Failures
 ```bash
-# Check JWT role configuration
+# Check JWT role configuration for teams
 export VAULT_ADDR="http://localhost:8200"
 export VAULT_TOKEN="<your-root-token-from-vault-keys.txt>"
-vault read auth/jenkins-jwt/role/dev-builds
 
-# Verify claim mappings are set
-# Should show: claim_mappings = map[jenkins_job:job]
+# Check team roles
+vault read auth/jenkins-jwt/role/mobile-developers
+vault read auth/jenkins-jwt/role/frontend-developers
+vault read auth/jenkins-jwt/role/backend-developers
+vault read auth/jenkins-jwt/role/devops-team
+
+# Verify bound claims are set correctly
+# Should show: bound_claims = map[selected_group:mobile-developers]
 ```
 
 ### Permission Denied Errors
-1. Check policy has correct accessor ID:
+1. Check policy exists for the team:
    ```bash
-   vault auth list  # Get current accessor
-   vault policy read jenkins-dev  # Verify policy uses correct accessor
+   vault policy read mobile-developers
+   vault policy read frontend-developers  
+   vault policy read backend-developers
+   vault policy read devops-team
    ```
 
-2. Verify secret exists:
+2. Verify team-specific secrets exist:
    ```bash
-   vault kv get kv/dev/apps/sample-pipeline/example
+   vault kv get kv/dev/apps/mobile-app/example
+   vault kv get kv/dev/apps/frontend-app/example
+   vault kv get kv/dev/apps/backend-service/example
+   vault kv get kv/dev/apps/devops-tools/example
    ```
 
 ### Container Startup Issues
@@ -254,13 +262,18 @@ jenkins-vault-poc/
 │
 ├── vault/                      # Vault configuration
 │   ├── config/vault.hcl        # Production Vault config
-│   ├── policies/jenkins-dev.hcl # JWT-based access policy
+│   ├── policies/               # Team-based policies
+│   │   ├── mobile-developers.hcl
+│   │   ├── frontend-developers.hcl
+│   │   ├── backend-developers.hcl
+│   │   └── devops-team.hcl
 │   └── scripts/
-│       ├── setup_vault.sh      # Configure JWT auth
-│       └── seed_secret.sh      # Populate test secrets
+│       ├── setup_vault.sh      # Configure JWT auth + team setup
+│       ├── demo_role_based_auth.sh  # Team authentication demo
+│       └── seed_secret.sh      # Populate team-specific test secrets
 │
 ├── pipelines/                  # Example pipelines
-│   └── Jenkinsfile.demo        # Full JWT → Vault integration
+│   └── Jenkinsfile.role-selection  # Team-based role selection example
 │
 ├── okta/                       # Authentication docs
 │   └── okta_sso_notes.md       # Okta SSO integration notes
@@ -275,15 +288,16 @@ jenkins-vault-poc/
 
 ### For Team-Based Organizations:
 
-1. **Use team-specific `sub` claims**:
+1. **Use team-specific `selected_group` claims**:
    ```json
-   {"sub": "team-alpha"}  // Frontend team
-   {"sub": "team-beta"}   // Backend team  
-   {"sub": "team-gamma"}  // Data team
+   {"selected_group": "mobile-developers"}     // Mobile team
+   {"selected_group": "frontend-developers"}   // Frontend team  
+   {"selected_group": "backend-developers"}    // Backend team
+   {"selected_group": "devops-team"}           // DevOps team
    ```
 
 2. **Map Okta groups to teams**:
-   - Okta group `team-alpha` → JWT `sub: "team-alpha"`
+   - Okta group `mobile-developers` → JWT `selected_group: "mobile-developers"`
    - Results in 1 entity per team (logically groups identical workloads)
 
 3. **Implement proper key rotation**:
@@ -310,6 +324,6 @@ jenkins-vault-poc/
 ## Support & Documentation
 
 - **Vault JWT Auth**: https://developer.hashicorp.com/vault/docs/auth/jwt
-- **Jenkins Integration**: See `pipelines/Jenkinsfile.demo`
+- **Jenkins Integration**: See `pipelines/Jenkinsfile.role-selection`
 - **Policy Templating**: https://developer.hashicorp.com/vault/docs/concepts/policies#templated-policies
 - **Raft Storage**: https://developer.hashicorp.com/vault/docs/configuration/storage/raft

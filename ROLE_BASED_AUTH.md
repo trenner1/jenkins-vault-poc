@@ -1,74 +1,78 @@
-# Vault Role-Based JWT Authentication
+# Vault Team-Based JWT Authentication
 
-This setup provides role-based authentication for Jenkins pipelines using JWT tokens with different access levels.
+This setup provides team-based authentication for Jenkins pipelines using JWT tokens with different team access levels.
 
 ## Overview
 
-The system supports three role types, each with different permissions:
+The system supports four team types, each with different permissions:
 
-1. **Admin** (`role: "admin"`) - Full access to all secrets
-2. **Developer** (`role: "developer"`) - Read/write access to job-scoped secrets 
-3. **Readonly** (`role: "readonly"`) - Read-only access to job-scoped secrets
-
-> **Note**: In a production environment, you would replace "admin", "developer", and "readonly" with your actual group names that have identical workloads. For example:
-> - `role: "platform-team"` instead of `role: "admin"` 
-> - `role: "backend-developers"` instead of `role: "developer"`
-> - `role: "qa-automation"` instead of `role: "readonly"`
-> 
-> The key principle is that all jobs belonging to the same functional group (with identical access requirements) should use the same role value, ensuring they get the same entity and avoiding entity churn.
+1. **mobile-developers** - Access to mobile app secrets (iOS/Android builds, app store credentials)
+2. **frontend-developers** - Access to frontend secrets (build tools, CDN credentials, web assets)
+3. **backend-developers** - Access to backend secrets (databases, APIs, service credentials)
+4. **devops-team** - Access to infrastructure secrets (cloud resources, monitoring, CI/CD)
 
 ## How It Works
 
 ### JWT Claims
-When creating a JWT token for Vault authentication, include a `role` claim:
+When creating a JWT token for Vault authentication, include a `selected_group` claim:
 
 ```json
 {
   "iss": "http://localhost:8080",
   "aud": "vault",
   "env": "dev",
-  "role": "admin",        // ← This determines access level
-  "jenkins_job": "my-job",
+  "selected_group": "backend-developers",  // ← This determines team access level
+  "jenkins_job": "user-api-build",
+  "build_id": "build-123",
+  "user": "alice.smith",
   "iat": 1234567890,
   "exp": 1234568490
 }
 ```
 
 ### Vault Roles
-The JWT `role` claim maps to these Vault authentication roles:
-- `role: "admin"` → authenticates to `admin-builds` role → gets `jenkins-admin` policy
-- `role: "developer"` → authenticates to `developer-builds` role → gets `jenkins-developers` policy  
-- `role: "readonly"` → authenticates to `readonly-builds` role → gets `jenkins-readonly` policy
-
-> **Production Customization**: When implementing this for your organization, create Vault roles and policies that match your team structure:
-> ```bash
-> # Example: Create roles for actual team names
-> vault write auth/jenkins-jwt/role/platform-team-builds bound_claims='{"role": "platform-team"}' token_policies="platform-team-policy"
-> vault write auth/jenkins-jwt/role/backend-dev-builds bound_claims='{"role": "backend-developers"}' token_policies="backend-dev-policy"  
-> vault write auth/jenkins-jwt/role/qa-builds bound_claims='{"role": "qa-automation"}' token_policies="qa-readonly-policy"
-> ```
+The JWT `selected_group` claim maps to these Vault authentication roles:
+- `selected_group: "mobile-developers"` → authenticates to `mobile-developers` role → gets `mobile-developers` policy
+- `selected_group: "frontend-developers"` → authenticates to `frontend-developers` role → gets `frontend-developers` policy
+- `selected_group: "backend-developers"` → authenticates to `backend-developers` role → gets `backend-developers` policy
+- `selected_group: "devops-team"` → authenticates to `devops-team` role → gets `devops-team` policy
 
 ### Access Patterns
 
-#### Admin Role (`jenkins-admin` policy)
+#### Mobile Developers Policy (`mobile-developers` policy)
 ```hcl
-# Full access to all secrets
-path "kv/data/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/metadata/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+# Access to mobile-specific secrets
+path "kv/data/mobile/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/data/shared/build-tools/*" { capabilities = ["read"] }
+path "kv/metadata/mobile/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/metadata/shared/build-tools/*" { capabilities = ["read", "list"] }
 ```
 
-#### Developer Role (`jenkins-developers` policy)  
+#### Frontend Developers Policy (`frontend-developers` policy)  
 ```hcl
-# Read/write access to job-scoped secrets only
-path "kv/data/jobs/+/*" { capabilities = ["create", "read", "update", "delete"] }
-path "kv/metadata/jobs/+/*" { capabilities = ["read", "list"] }
+# Access to frontend-specific secrets
+path "kv/data/frontend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/data/shared/build-tools/*" { capabilities = ["read"] }
+path "kv/metadata/frontend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/metadata/shared/build-tools/*" { capabilities = ["read", "list"] }
 ```
 
-#### Readonly Role (`jenkins-readonly` policy)
+#### Backend Developers Policy (`backend-developers` policy)
 ```hcl
-# Read-only access to job-scoped secrets only
-path "kv/data/jobs/+/*" { capabilities = ["read"] }
-path "kv/metadata/jobs/+/*" { capabilities = ["read", "list"] }
+# Access to backend-specific secrets
+path "kv/data/backend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/data/shared/databases/*" { capabilities = ["read"] }
+path "kv/metadata/backend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/metadata/shared/databases/*" { capabilities = ["read", "list"] }
+```
+
+#### DevOps Team Policy (`devops-team` policy)
+```hcl
+# Access to infrastructure and shared secrets
+path "kv/data/devops/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/data/shared/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/metadata/devops/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "kv/metadata/shared/*" { capabilities = ["create", "read", "update", "delete", "list"] }
 ```
 
 ## Usage in Jenkins
@@ -79,21 +83,25 @@ pipeline {
     agent any
     
     environment {
-        // Set the role based on branch, job type, etc.
-        VAULT_ROLE = "${env.BRANCH_NAME == 'main' ? 'admin' : 'developer'}"
+        // Set the team based on pipeline context
+        SELECTED_TEAM = "${env.JOB_NAME.contains('mobile') ? 'mobile-developers' : 
+                         env.JOB_NAME.contains('frontend') ? 'frontend-developers' : 
+                         env.JOB_NAME.contains('backend') ? 'backend-developers' : 'devops-team'}"
     }
     
     stages {
         stage('Access Secrets') {
             steps {
                 script {
-                    // Create JWT with role claim
+                    // Create JWT with selected_group claim
                     def jwtClaims = [
                         iss: 'http://localhost:8080',
                         aud: 'vault',
                         env: 'dev', 
-                        role: env.VAULT_ROLE,  // This determines access level
+                        selected_group: env.SELECTED_TEAM,  // This determines team access level
                         jenkins_job: env.JOB_NAME,
+                        build_id: env.BUILD_ID,
+                        user: env.BUILD_USER_ID ?: 'jenkins',
                         iat: (System.currentTimeMillis() / 1000) as long,
                         exp: ((System.currentTimeMillis() / 1000) + 600) as long
                     ]
@@ -104,23 +112,23 @@ pipeline {
                     def vaultToken = sh(
                         script: """
                             curl -s -X POST ${VAULT_ADDR}/v1/auth/jenkins-jwt/login \\
-                                -d '{"role": "${env.VAULT_ROLE}-builds", "jwt": "${jwtToken}"}' | \\
+                                -d '{"role": "${env.SELECTED_TEAM}", "jwt": "${jwtToken}"}' | \\
                                 jq -r '.auth.client_token'
                         """,
                         returnStdout: true
                     ).trim()
                     
-                    // Use the token to access secrets
+                    // Use the token to access team-specific secrets
                     def secret = sh(
                         script: """
                             curl -s -H "X-Vault-Token: ${vaultToken}" \\
-                                ${VAULT_ADDR}/v1/kv/data/jobs/${env.JOB_NAME}/db-password | \\
-                                jq -r '.data.data.password'
+                                ${VAULT_ADDR}/v1/kv/data/${env.SELECTED_TEAM}/app-config | \\
+                                jq -r '.data.data.api_key'
                         """,
                         returnStdout: true
                     ).trim()
                     
-                    echo "Retrieved secret: ${secret}"
+                    echo "Retrieved secret for team: ${env.SELECTED_TEAM}"
                 }
             }
         }
@@ -128,82 +136,101 @@ pipeline {
 }
 ```
 
-## Role Selection Strategies
+## Team Selection Strategies
 
-### 1. Branch-Based
+### 1. Job Name-Based
 ```groovy
-def vaultRole = env.BRANCH_NAME == 'main' ? 'admin' : 
-               env.BRANCH_NAME == 'develop' ? 'developer' : 'readonly'
+def selectedTeam = env.JOB_NAME.contains('mobile') ? 'mobile-developers' : 
+                   env.JOB_NAME.contains('frontend') ? 'frontend-developers' : 
+                   env.JOB_NAME.contains('backend') ? 'backend-developers' : 'devops-team'
 ```
 
-### 2. Job-Based
+### 2. Folder-Based
 ```groovy  
-def vaultRole = env.JOB_NAME.startsWith('deploy-') ? 'admin' :
-               env.JOB_NAME.startsWith('build-') ? 'developer' : 'readonly'
+def selectedTeam = env.JOB_NAME.startsWith('mobile/') ? 'mobile-developers' :
+                   env.JOB_NAME.startsWith('frontend/') ? 'frontend-developers' :
+                   env.JOB_NAME.startsWith('backend/') ? 'backend-developers' : 'devops-team'
 ```
 
-### 3. Team-Based (Recommended for Production)
-```groovy
-// Map Jenkins job folders to team roles
-def teamMappings = [
-    'platform/': 'platform-team',
-    'backend/': 'backend-developers', 
-    'frontend/': 'frontend-developers',
-    'qa/': 'qa-automation',
-    'data/': 'data-engineers'
-]
-
-def vaultRole = 'readonly' // default
-teamMappings.each { folder, role ->
-    if (env.JOB_NAME.startsWith(folder)) {
-        vaultRole = role
-    }
-}
-```
-
-### 4. Parameter-Based
+### 3. Parameter-Based (Recommended for Multi-Team Scenarios)
 ```groovy
 pipeline {
     parameters {
         choice(
-            name: 'VAULT_ACCESS_LEVEL',
-            choices: ['qa-automation', 'backend-developers', 'platform-team'],
-            description: 'Team role for Vault access'
+            name: 'SELECTED_TEAM',
+            choices: ['mobile-developers', 'frontend-developers', 'backend-developers', 'devops-team'],
+            description: 'Team context for Vault access'
         )
     }
-    // ... use params.VAULT_ACCESS_LEVEL as role
+    // ... use params.SELECTED_TEAM as selected_group
 }
+```
+
+### 4. Environment-Based
+```groovy
+// Different teams for different environments
+def selectedTeam = env.ENVIRONMENT == 'prod' ? 'devops-team' : 
+                   env.JOB_NAME.contains('mobile') ? 'mobile-developers' :
+                   env.JOB_NAME.contains('frontend') ? 'frontend-developers' : 'backend-developers'
 ```
 
 ## Benefits
 
-1. **No Entity Churn**: All users with the same `jenkins_job` claim get the same entity/alias regardless of role
-2. **Flexible Access Control**: Same entity can have different access levels based on context
-3. **Simple Configuration**: Single JWT auth mount handles all roles
-4. **Audit Trail**: Different roles clearly visible in Vault audit logs
-5. **Team-Based Security**: Map roles to actual organizational teams with identical workload requirements
-6. **Scalable**: Easy to add new teams/roles without changing the authentication mechanism
+1. **No Entity Churn**: Each team gets exactly one entity, preventing entity proliferation
+2. **Team Isolation**: Clear separation between team secrets and access patterns
+3. **Simple Configuration**: Single JWT auth mount handles all teams
+4. **Audit Trail**: Team context clearly visible in Vault audit logs
+5. **Scalable**: Easy to add new teams without changing the authentication mechanism
+6. **Cross-Team Support**: Users can work with different teams by selecting appropriate context
+7. **Predictable Licensing**: Fixed number of entities (4 total) regardless of user count
 
 ## Best Practices
 
-### Role Naming Convention
-- Use descriptive team/group names: `platform-team`, `backend-developers`, `qa-automation`
-- Avoid generic terms like `admin`, `user`, `developer` in production
-- Match your organization's team structure and naming conventions
-- Keep role names consistent across different environments (dev/staging/prod)
+### Team Selection Guidelines
+- Use descriptive team names that match your organization: `mobile-developers`, `frontend-developers`, etc.
+- Keep team names consistent across different environments (dev/staging/prod)
+- Map teams to actual functional groups with specific secret access requirements
+- Consider cross-team scenarios where users might need temporary access to other team contexts
 
 ### Entity Management  
-- Jobs with identical access requirements should use the same role claim
-- The `jenkins_job` claim creates the entity - keep this unique per logical job
-- The `role` claim only affects policy assignment, not entity creation
-- This ensures stable entities while allowing flexible access control
+- Each team gets exactly one entity based on the `selected_group` claim
+- Users working within the same team context get the same entity
+- This ensures stable entities while providing team-based access control
+- The `jenkins_job`, `build_id`, and `user` claims provide detailed audit information
+
+### Secret Organization
+- Organize secrets by team: `kv/data/mobile/*`, `kv/data/frontend/*`, etc.
+- Use shared paths for common resources: `kv/data/shared/build-tools/*`
+- Apply principle of least privilege: teams only access their specific secrets plus necessary shared resources
 
 ## Testing
 
-Run the test script to verify role-based access:
+Run the demo script to verify team-based access:
 ```bash
 cd vault/scripts
-python3 test_role_auth.py
+./demo_role_based_auth.sh
 ```
 
-This will test all three roles and show the different access patterns in action.
+This will test all four teams and show the different access patterns in action. You can also run the verification scripts:
+
+```bash
+# Test that entities don't churn within teams
+./verification/verify-no-churn.sh
+
+# Demonstrate team-based entity creation
+./verification/demo-team-entities.sh
+
+# Comprehensive team access demonstration
+./verification/comprehensive-team-demo.sh
+```
+
+## Current Team Configuration
+
+The system is currently configured with these teams:
+
+- **mobile-developers**: 1 entity for all iOS/Android development work
+- **frontend-developers**: 1 entity for all web frontend development work  
+- **backend-developers**: 1 entity for all API and backend service work
+- **devops-team**: 1 entity for all infrastructure and platform work
+
+Total entities: **4** (one per team, regardless of user count)
