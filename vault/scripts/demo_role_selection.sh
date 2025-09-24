@@ -103,7 +103,7 @@ print(token)
 }
 
 # Set up some test data first
-echo "📝 Setting up test data..."
+echo "Setting up test data..."
 vault kv put kv/dev/apps/mobile-app/config api_key="mobile-secret-123" >/dev/null 2>&1 || true
 vault kv put kv/dev/apps/frontend-app/config api_key="frontend-secret-456" >/dev/null 2>&1 || true
 vault kv put kv/dev/apps/backend-service/config api_key="backend-secret-789" >/dev/null 2>&1 || true
