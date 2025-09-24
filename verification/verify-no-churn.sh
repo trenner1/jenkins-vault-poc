@@ -74,7 +74,7 @@ cat /tmp/p.json | jq .
 P=$(b64url < /tmp/p.json)
 
 # Sign the JWT
-SIG=$(printf "%s.%s" "$H" "$P" | openssl dgst -sha256 -sign keys/jenkins-oidc.key -binary | b64url)
+SIG=$(printf "%s.%s" "$H" "$P" | openssl dgst -sha256 -sign ../keys/jenkins-oidc.key -binary | b64url)
 JWT_TOKEN="$H.$P.$SIG"
 
 echo ""
