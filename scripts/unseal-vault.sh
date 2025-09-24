@@ -4,10 +4,10 @@
 
 set -euo pipefail
 
-VAULT_KEYS_FILE="${VAULT_KEYS_FILE:-./vault-keys.txt}"
+VAULT_KEYS_FILE="${VAULT_KEYS_FILE:-../vault-keys.txt}"
 VAULT_ADDR="${VAULT_ADDR:-http://localhost:8200}"
 
-echo "🔓 Auto-unsealing Vault..."
+echo "Auto-unsealing Vault..."
 
 # Extract unseal keys from the keys file
 UNSEAL_KEY_1=$(grep "Unseal Key 1:" "$VAULT_KEYS_FILE" | cut -d' ' -f4)
@@ -25,24 +25,24 @@ done
 
 # Check if already unsealed
 if docker exec vault vault status 2>/dev/null | grep -q "Sealed.*false"; then
-    echo "✅ Vault is already unsealed!"
+    echo "Vault is already unsealed!"
     exit 0
 fi
 
 # Unseal with first 3 keys
-echo "🔑 Unsealing with key 1/3..."
+echo "Unsealing with key 1/3..."
 docker exec vault vault operator unseal "$UNSEAL_KEY_1" >/dev/null
 
-echo "🔑 Unsealing with key 2/3..."
+echo "Unsealing with key 2/3..."
 docker exec vault vault operator unseal "$UNSEAL_KEY_2" >/dev/null
 
-echo "🔑 Unsealing with key 3/3..."
+echo "Unsealing with key 3/3..."
 docker exec vault vault operator unseal "$UNSEAL_KEY_3" >/dev/null
 
 # Verify unsealed
 if docker exec vault vault status 2>/dev/null | grep -q "Sealed.*false"; then
-    echo "✅ Vault successfully unsealed!"
+    echo "Vault successfully unsealed!"
 else
-    echo "❌ Failed to unseal Vault"
+    echo "Failed to unseal Vault"
     exit 1
 fi
