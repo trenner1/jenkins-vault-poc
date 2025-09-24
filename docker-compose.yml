@@ -1,6 +1,6 @@
 services:
   vault:
-    image: hashicorp/vault:1.16
+    build: ./vault
     container_name: vault
     ports:
       - "8200:8200"  # API communication

@@ -1,19 +1,18 @@
-# Developer policy - read/write access to project-scoped secrets
-# Access restricted to the project specified in token metadata
-path "kv/data/+/apps/{{token.meta.project}}/*" {
+# Frontend Developers policy - read/write access to frontend-app secrets only
+path "kv/data/+/apps/frontend-app/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
-path "kv/metadata/+/apps/{{token.meta.project}}/*" {
+path "kv/metadata/+/apps/frontend-app/*" {
   capabilities = ["read", "list"]
 }
 
-# Legacy job-based paths for backward compatibility (project-scoped)
-path "kv/data/jobs/{{token.meta.project}}/*" {
+# Legacy job-based paths for backward compatibility
+path "kv/data/jobs/frontend-app/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
-path "kv/metadata/jobs/{{token.meta.project}}/*" {
+path "kv/metadata/jobs/frontend-app/*" {
   capabilities = ["read", "list"]
 }
 

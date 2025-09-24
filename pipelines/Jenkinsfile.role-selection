@@ -1,288 +1,232 @@
 pipeline {
   agent any
-  
-  parameters {
-    choice(
-      name: 'VAULT_ROLE',
-      choices: ['readonly-builds', 'developer-builds', 'admin-builds'],
-      description: 'Select the Vault role for this build (readonly=read secrets only, developer=read/write job secrets, admin=full access)'
-    )
-    choice(
-      name: 'ENVIRONMENT',
-      choices: ['dev', 'staging', 'prod'],
-      description: 'Target environment for this pipeline run'
-    )
-    choice(
-      name: 'PROJECT_NAME',
-      choices: ['mobile-app', 'frontend-app', 'backend-service', 'devops-tools'],
-      description: 'Team project for scoped secret access'
-    )
+
+  options {
+    ansiColor('xterm')
+    timestamps()
   }
-  
+
+  parameters {
+    booleanParam(name: 'VERBOSE', defaultValue: false, description: 'Print detailed debug logs')
+  }
+
   environment {
-    // Jenkins → Vault inside your compose network
     VAULT_ADDR = 'http://vault:8200'
   }
 
   stages {
-    stage('Show Selected Parameters') {
+    stage('Resolve user & groups') {
       steps {
         script {
-          echo "🔐 Selected Vault Role: ${params.VAULT_ROLE}"
-          echo "🎯 Target Environment: ${params.ENVIRONMENT}"
-          echo "📁 Project Name: ${params.PROJECT_NAME}"
-          echo "👤 Triggered by: ${currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')[0]?.userId ?: 'system'}"
+          def cause   = currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')
+          def starter = cause ? cause[0]?.userId : null
+          if (!starter) { error 'Cannot determine triggering user' }
+
+          def u = hudson.model.User.getById(starter, false)
+          if (!u) { error "Unknown Jenkins user: ${starter}" }
+
+          def groups = u.impersonate().authorities.collect { it.authority }.findAll { it }
+          def allowed  = ['mobile-developers','frontend-developers','backend-developers','devops-team']
+          def eligible = groups.intersect(allowed)
+          if (eligible.isEmpty()) { error "No eligible groups. Yours: ${groups}" }
+
+          env.BUILD_USER_EMAIL = starter
+          env.ELIGIBLE_GROUPS_NL = eligible.join('\n')
+
+          echo "user: ${starter}"
+          echo "eligible groups: ${eligible}"
+          if (params.VERBOSE) { echo "all groups: ${groups}" }
         }
       }
     }
 
-    stage('JWT → Vault login & child token') {
+    stage('Choose role') {
+      steps {
+        script {
+          def mapRole = [:] // e.g. ['frontend-developers':'role-frontend']
+          def eligible = env.ELIGIBLE_GROUPS_NL.readLines().findAll { it?.trim() }
+          def chosen = eligible.size() == 1 ? eligible[0] : input(
+            id: 'chooseRole',
+            message: 'Choose group to use for Vault',
+            parameters: [choice(name: 'GROUP', choices: env.ELIGIBLE_GROUPS_NL)]
+          ) as String
+
+          env.SELECTED_GROUP = chosen
+          env.VAULT_ROLE     = mapRole.get(chosen, chosen)
+          echo "role: ${env.VAULT_ROLE}"
+        }
+      }
+    }
+
+    stage('Login to Vault & mint child token') {
       steps {
         withCredentials([file(credentialsId: 'jenkins-oidc-privkey', variable: 'JWT_KEY')]) {
-          sh '''
-            set -eu
+          sh(label: 'Create JWT & login', script: '''
+set -eu
 
-            b64url() { openssl base64 -A | tr "+/" "-_" | tr -d "="; }
+b64(){ openssl base64 -A | tr "+/" "-_" | tr -d "="; }
 
-            # --- Build JWT header
-            printf '{"alg":"RS256","typ":"JWT","kid":"jenkins-dev-key-1"}' > /tmp/h.json
-            H=$(b64url < /tmp/h.json)
+# header
+printf '{"alg":"RS256","typ":"JWT","kid":"jenkins-dev-key-1"}' > /tmp/h.json
+H=$(b64 < /tmp/h.json)
 
-            # --- Build JWT payload (claims must match Vault role bindings)
-            IAT=$(date +%s); EXP=$((IAT+900))
-            JOB="${JOB_NAME:-}"; REPO="${GIT_URL:-}"; BR="${BRANCH_NAME:-}"
-            BID="${BUILD_ID:-}"; COM="${GIT_COMMIT:-}"
-            
-            # Map Jenkins role parameter to Vault claim value
-            case "${VAULT_ROLE}" in
-              "admin-builds")
-                ROLE_CLAIM="admin"
-                ;;
-              "developer-builds")
-                ROLE_CLAIM="developer"
-                ;;
-              "readonly-builds")
-                ROLE_CLAIM="readonly"
-                ;;
-              *)
-                echo "Unknown role: ${VAULT_ROLE}"; exit 1
-                ;;
-            esac
+# payload (keep logs quiet; write to file)
+IAT=$(date +%s); EXP=$((IAT+900))
+JOB="${JOB_NAME:-}"; BID="${BUILD_ID:-}"
+GROUPS_SPACE=$(printf %s "$ELIGIBLE_GROUPS_NL" | tr '\\n' ' ')
+jq -n \
+  --arg iss "http://localhost:8080" \
+  --arg sub "jenkins-dev" \
+  --arg aud "vault" \
+  --arg env "dev" \
+  --arg job "$JOB" \
+  --arg build "$BID" \
+  --arg user_id "${BUILD_USER_EMAIL:-unknown}" \
+  --arg selected_group "${SELECTED_GROUP}" \
+  --arg groups_str "$GROUPS_SPACE" \
+  --argjson iat "$IAT" --argjson exp "$EXP" \
+  '{
+     iss:$iss, sub:$sub, aud:$aud, iat:$iat, exp:$exp, env:$env,
+     jenkins_job:$job, build_id:$build,
+     user_id:$user_id, selected_group:$selected_group,
+     okta_groups: ($groups_str | split(" ") | map(select(length>0)))
+   }' > /tmp/p.json
 
-            jq -n \
-              --arg iss "http://localhost:8080" \
-              --arg sub "jenkins-dev" \
-              --arg aud "vault" \
-              --arg env "${ENVIRONMENT}" \
-              --arg role "$ROLE_CLAIM" \
-              --arg job "$JOB" \
-              --arg repo "$REPO" \
-              --arg branch "$BR" \
-              --arg build "$BID" \
-              --arg commit "$COM" \
-              --arg project "${PROJECT_NAME}" \
-              --argjson iat "$IAT" \
-              --argjson exp "$EXP" \
-              '{iss:$iss,sub:$sub,aud:$aud,iat:$iat,exp:$exp,env:$env,role:$role,
-                jenkins_job:$job,repo:$repo,branch:$branch,build_id:$build,commit:$commit,project:$project}' > /tmp/p.json
-            P=$(b64url < /tmp/p.json)
+P=$(b64 < /tmp/p.json)
+SIG=$(printf "%s.%s" "$H" "$P" | openssl dgst -sha256 -sign "$JWT_KEY" -binary | b64)
+ID_TOKEN="$H.$P.$SIG"
 
-            # --- Sign JWT with private key stored in Jenkins credentials
-            SIG=$(printf "%s.%s" "$H" "$P" | openssl dgst -sha256 -sign "$JWT_KEY" -binary | b64url)
-            ID_TOKEN="$H.$P.$SIG"
+LOGIN=$(curl -sS -X POST "$VAULT_ADDR/v1/auth/jenkins-jwt/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"role":"'"${VAULT_ROLE}"'","jwt":"'"$ID_TOKEN"'"}')
 
-            # --- Login to Vault via JWT auth using selected role
-            LOGIN_RESP=$(curl -s -X POST "$VAULT_ADDR/v1/auth/jenkins-jwt/login" \
-              -H 'Content-Type: application/json' \
-              -d '{"role":"'"${VAULT_ROLE}"'","jwt":"'"$ID_TOKEN"'"}')
-            VAULT_TOKEN=$(echo "$LOGIN_RESP" | jq -r .auth.client_token)
-            [ "$VAULT_TOKEN" != "null" ] && [ -n "$VAULT_TOKEN" ] || { echo "Vault login failed"; echo "$LOGIN_RESP" | jq .; exit 1; }
+VAULT_TOKEN=$(printf %s "$LOGIN" | jq -r .auth.client_token)
+[ "${VAULT_TOKEN:-}" != "null" ] && [ -n "${VAULT_TOKEN:-}" ] || {
+  echo "Vault login failed"; echo "$LOGIN" | jq .; exit 1; }
 
-            # --- Create a short-lived child token with rich meta
-            # Determine policy based on selected role
-            case "${VAULT_ROLE}" in
-              "admin-builds")
-                POLICY="jenkins-admin"
-                ;;
-              "developer-builds")
-                POLICY="jenkins-developers"
-                ;;
-              "readonly-builds")
-                POLICY="jenkins-readonly"
-                ;;
-              *)
-                echo "Unknown role: ${VAULT_ROLE}"; exit 1
-                ;;
-            esac
+# short-lived child token with minimal meta
+REQ=$(jq -n \
+  --arg role "${VAULT_ROLE}" \
+  --arg job "$JOB" \
+  --arg build "$BID" \
+  --arg user_id "${BUILD_USER_EMAIL:-unknown}" \
+  --arg selected "${SELECTED_GROUP}" \
+  '{
+    ttl:"15m", num_uses:10, policies:[$role],
+    meta:{ job:$job, build_id:$build, user_id:$user_id, role:$role, selected_group:$selected }
+  }')
 
-            REQ=$(jq -n \
-              --arg job "$JOB" \
-              --arg bid "$BID" \
-              --arg repo "$REPO" \
-              --arg branch "$BR" \
-              --arg commit "$COM" \
-              --arg env "${ENVIRONMENT}" \
-              --arg role "${VAULT_ROLE}" \
-              --arg project "${PROJECT_NAME}" \
-              --arg policy "$POLICY" \
-              '{
-                ttl: "15m",
-                num_uses: 10,
-                policies: [$policy],
-                meta: {
-                  job: $job,
-                  build_id: $bid,
-                  repo: $repo,
-                  branch: $branch,
-                  commit: $commit,
-                  env: $env,
-                  role: $role,
-                  project: $project,
-                  signing_kid: "jenkins-dev-key-1"
-                }
-              }')
+RESP=$(printf "%s" "$REQ" | curl -sS -H "X-Vault-Token: $VAULT_TOKEN" \
+  -X POST "$VAULT_ADDR/v1/auth/token/create/jenkins-child" -d @-)
 
-            RESP=$(printf "%s" "$REQ" | curl -s \
-              -H "X-Vault-Token: $VAULT_TOKEN" \
-              -X POST "$VAULT_ADDR/v1/auth/token/create/jenkins-child" \
-              -d @-)
+CHILD=$(printf %s "$RESP" | jq -r '.auth.client_token')
+[ "${CHILD:-}" != "null" ] && [ -n "${CHILD:-}" ] || { echo "$RESP" | jq .; exit 1; }
 
-            CHILD=$(echo "$RESP" | jq -r '.auth.client_token')
-            [ "$CHILD" != "null" ] && [ -n "$CHILD" ] || { echo "child token create failed"; echo "$RESP" | jq .; exit 1; }
+printf "VAULT_TOKEN=%s\n" "$CHILD" > .vault_token
 
-            printf "VAULT_TOKEN=%s\n" "$CHILD" > .vault_token
-            echo "✅ Successfully created child token with policy: $POLICY"
-            echo "🔍 JWT role claim used: $ROLE_CLAIM"
-            echo "🎯 Vault role selected: ${VAULT_ROLE}"
-          '''
+if [ "${VERBOSE:-false}" = "true" ]; then
+  echo "login summary:"; echo "$LOGIN" | jq '{policies: .auth.policies, lease_duration: .auth.lease_duration, metadata: .auth.metadata}'
+fi
+''')
         }
       }
     }
-    
-    stage('Read secret (role-based access)') {
+
+    stage('Read team secret') {
       steps {
-        sh '''
-          set -eu
-          . ./.vault_token
-          
-          echo "🔑 Reading kv/${ENVIRONMENT}/apps/${PROJECT_NAME}/example (v2 data endpoint)"
-          echo "📋 Using role: ${VAULT_ROLE} with corresponding policy"
-          
-          RESP=$(curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
-            "$VAULT_ADDR/v1/kv/data/${ENVIRONMENT}/apps/${PROJECT_NAME}/example")
-          
-          if echo "$RESP" | jq -e '.data.data' > /dev/null 2>&1; then
-            echo "✅ Successfully read secret:"
-            echo "$RESP" | jq '.data.data'
-          else
-            echo "❌ Failed to read secret:"
-            echo "$RESP" | jq .
-          fi
-        '''
+        sh(label: 'Read kv secret', script: '''
+set -eu
+. ./.vault_token
+
+# map group → project
+case "${SELECTED_GROUP}" in
+  mobile-developers)  PROJECT="mobile-app" ;;
+  frontend-developers) PROJECT="frontend-app" ;;
+  backend-developers) PROJECT="backend-service" ;;
+  devops-team)        PROJECT="devops-tools" ;;
+  *) echo "unknown group ${SELECTED_GROUP}" >&2; exit 1 ;;
+esac
+
+RESP=$(curl -sS -H "X-Vault-Token: $VAULT_TOKEN" \
+  "$VAULT_ADDR/v1/kv/data/dev/apps/${PROJECT}/example")
+
+# print a short, friendly line + the value(s)
+if jq -e '.data.data' >/dev/null 2>&1 <<<'$RESP'; then
+  echo "secret: dev/apps/${PROJECT}/example"
+  jq -r '.data.data' <<<'$RESP'
+else
+  echo "failed to read secret for ${PROJECT}"
+  jq . <<<'$RESP'
+  exit 1
+fi
+''')
       }
     }
 
-    stage('Test cross-project access (expect different behavior by role)') {
+    stage('Boundary check (quiet)') {
       steps {
-        sh '''
-          set -eu
-          . ./.vault_token
-          OTHER_PROJECT="frontend-app"
-          
-          echo "🧪 Testing access to different project: $OTHER_PROJECT"
-          echo "🔐 Current role: ${VAULT_ROLE}"
-          
-          CODE=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
-            -H "X-Vault-Token: $VAULT_TOKEN" \
-            "$VAULT_ADDR/v1/kv/data/${ENVIRONMENT}/apps/$OTHER_PROJECT/example")
-          
-          echo "HTTP Response Code: $CODE"
-          
-          case "${VAULT_ROLE}" in
-            "admin-builds")
-              echo "🔓 Admin role - should have access to other projects"
-              ;;
-            "developer-builds"|"readonly-builds")
-              echo "🔒 Non-admin role - access should be restricted to own project scope"
-              ;;
-          esac
-          
-          cat /tmp/resp.json; echo
-        '''
+        sh(label: 'Deny other project', script: '''
+set -eu
+. ./.vault_token
+
+case "${SELECTED_GROUP}" in
+  mobile-developers)  ALLOWED="mobile-app" ;;
+  frontend-developers) ALLOWED="frontend-app" ;;
+  backend-developers) ALLOWED="backend-service" ;;
+  devops-team)        ALLOWED="devops-tools" ;;
+esac
+
+ALL="mobile-app frontend-app backend-service devops-tools"
+FORB=""
+for p in $ALL; do
+  [ "$p" = "$ALLOWED" ] || FORB="$FORB $p"
+done
+
+# pick first forbidden (deterministic, less log noise)
+set -- $FORB
+TEST_PROJECT="$1"
+
+CODE=$(curl -sS -o /tmp/deny.json -w "%{http_code}" \
+  -H "X-Vault-Token: $VAULT_TOKEN" \
+  "$VAULT_ADDR/v1/kv/data/dev/apps/$TEST_PROJECT/example" || true)
+
+if [ "$CODE" = "403" ] || [ "$CODE" = "404" ]; then
+  echo "deny OK for $TEST_PROJECT (HTTP $CODE)"
+else
+  echo "unexpected access result for $TEST_PROJECT (HTTP $CODE)"
+  jq . /tmp/deny.json || true
+  exit 1
+fi
+''')
       }
     }
 
-    stage('Capture Vault token proof') {
+    stage('Summary') {
       steps {
-        sh '''
-          set -eu
-          . ./.vault_token
-    
-          # Lookup self to get accessor/meta
-          SELF=$(curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
-            "$VAULT_ADDR/v1/auth/token/lookup-self")
-    
-          ACCESSOR=$(echo "$SELF" | jq -r '.data.accessor')
-          TTL=$(echo "$SELF"       | jq -r '.data.ttl')
-          ISSUE=$(echo "$SELF"     | jq -r '.data.issue_time')
-          META=$(echo "$SELF"      | jq -c '.data.meta')
-          POLICIES=$(echo "$SELF"  | jq -c '.data.policies')
-    
-          # Create a non-sensitive fingerprint of the token
-          FPR_SHA256=$(printf %s "$VAULT_TOKEN" | openssl dgst -sha256 | sed 's/^.*= //')
-    
-          cat > vault-token-proof.json <<EOF
-          {
-            "selected_role": "${VAULT_ROLE}",
-            "target_environment": "${ENVIRONMENT}",
-            "project_name": "${PROJECT_NAME}", 
-            "accessor": "$ACCESSOR",
-            "token_fingerprint_sha256": "$FPR_SHA256",
-            "ttl_seconds": $TTL,
-            "issue_time": "$ISSUE",
-            "policies": $POLICIES,
-            "meta": $META
-          }
-          EOF
-    
-          echo "📄 Token information captured:"
-          jq . vault-token-proof.json
-        '''
-        archiveArtifacts artifacts: 'vault-token-proof.json', onlyIfSuccessful: false
-      }
-    }
-
-    stage('Show final token details') {
-      steps {
-        sh '''
-          set -eu
-          . ./.vault_token
-          
-          echo "🔍 Final token analysis:"
-          RESP=$(curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
-            "$VAULT_ADDR/v1/auth/token/lookup-self")
-          
-          echo "Selected Role: ${VAULT_ROLE}"
-          echo "TTL Remaining: $(echo "$RESP" | jq -r '.data.ttl') seconds"
-          echo "Policies: $(echo "$RESP" | jq -c '.data.policies')"
-          echo "Token Metadata:"
-          echo "$RESP" | jq '.data.meta'
-        '''
+        sh(label: 'Print summary', script: '''
+set -eu
+. ./.vault_token
+LOOKUP=$(curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/lookup-self")
+jq -n --arg role "${VAULT_ROLE}" --arg group "${SELECTED_GROUP}" \
+      --arg user "${BUILD_USER_EMAIL}" \
+      --arg job "${JOB_NAME}" \
+      --arg ttl "$(echo "$LOOKUP" | jq -r .data.ttl)" \
+      --arg policies "$(echo "$LOOKUP" | jq -cr .data.policies)" \
+      '{role:$role, selected_group:$group, user:$user, job:$job, ttl_seconds:($ttl|tonumber), policies:($policies|fromjson)}'
+''')
       }
     }
   }
 
   post {
-    always { 
-      sh '''
-        if [ -f ./.vault_token ]; then
-          . ./.vault_token
-          echo "🧹 Revoking Vault token..."
-          curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
-            "$VAULT_ADDR/v1/auth/token/revoke-self" || true
-        fi
-        rm -f .vault_token || true
-      ''' 
+    always {
+      sh(label: 'Revoke token', script: '''
+if [ -f ./.vault_token ]; then
+  . ./.vault_token
+  curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/revoke-self" >/dev/null || true
+fi
+rm -f .vault_token || true
+''')
     }
   }
 }
