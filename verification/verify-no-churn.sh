@@ -4,8 +4,6 @@ set -euo pipefail
 # Source environment variables if .env exists
 if [ -f "../.env" ]; then
     export $(grep -v '^#' ../.env | xargs)
-elif [ -f "/Users/trevorrenner/projects/jenkins-vault-poc/.env" ]; then
-    export $(grep -v '^#' /Users/trevorrenner/projects/jenkins-vault-poc/.env | xargs)
 fi
 
 # Set defaults if not already set

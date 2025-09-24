@@ -2,12 +2,13 @@
 set -euo pipefail
 
 # Source environment variables if .env exists
-if [ -f ".env" ]; then
-    source ".env"
+if [ -f "../.env" ]; then
+    export $(grep -v '^#' ../.env | xargs)
 fi
 
-export VAULT_ADDR=http://localhost:8200
-: "${VAULT_TOKEN:?VAULT_TOKEN must be set}"
+# Set defaults if not already set
+export VAULT_ADDR="${VAULT_ADDR:-http://localhost:8200}"
+: "${VAULT_TOKEN:?VAULT_TOKEN must be set. Run the start script or set manually.}"
 
 echo "=== COMPREHENSIVE TEAM-BASED DEMO ==="
 echo ""
