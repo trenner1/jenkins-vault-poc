@@ -15,12 +15,13 @@ pipeline {
   }
 
   stages {
+
     stage('Resolve user & groups') {
       steps {
         script {
           def cause   = currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')
           def starter = cause ? cause[0]?.userId : null
-          if (!starter) { error 'Cannot determine triggering user' }
+          if (!starter) { error 'Cannot determine triggering user (launch from UI)' }
 
           def u = hudson.model.User.getById(starter, false)
           if (!u) { error "Unknown Jenkins user: ${starter}" }
@@ -30,7 +31,7 @@ pipeline {
           def eligible = groups.intersect(allowed)
           if (eligible.isEmpty()) { error "No eligible groups. Yours: ${groups}" }
 
-          env.BUILD_USER_EMAIL = starter
+          env.BUILD_USER_EMAIL   = starter
           env.ELIGIBLE_GROUPS_NL = eligible.join('\n')
 
           echo "user: ${starter}"
@@ -43,7 +44,7 @@ pipeline {
     stage('Choose role') {
       steps {
         script {
-          def mapRole = [:] // e.g. ['frontend-developers':'role-frontend']
+          def roleMap = [:] // e.g. ['frontend-developers':'role-frontend']
           def eligible = env.ELIGIBLE_GROUPS_NL.readLines().findAll { it?.trim() }
           def chosen = eligible.size() == 1 ? eligible[0] : input(
             id: 'chooseRole',
@@ -52,7 +53,7 @@ pipeline {
           ) as String
 
           env.SELECTED_GROUP = chosen
-          env.VAULT_ROLE     = mapRole.get(chosen, chosen)
+          env.VAULT_ROLE     = roleMap.get(chosen, chosen)
           echo "role: ${env.VAULT_ROLE}"
         }
       }
@@ -66,11 +67,11 @@ set -eu
 
 b64(){ openssl base64 -A | tr "+/" "-_" | tr -d "="; }
 
-# header
+# JWT header
 printf '{"alg":"RS256","typ":"JWT","kid":"jenkins-dev-key-1"}' > /tmp/h.json
 H=$(b64 < /tmp/h.json)
 
-# payload (keep logs quiet; write to file)
+# JWT payload
 IAT=$(date +%s); EXP=$((IAT+900))
 JOB="${JOB_NAME:-}"; BID="${BUILD_ID:-}"
 GROUPS_SPACE=$(printf %s "$ELIGIBLE_GROUPS_NL" | tr '\\n' ' ')
@@ -96,15 +97,15 @@ P=$(b64 < /tmp/p.json)
 SIG=$(printf "%s.%s" "$H" "$P" | openssl dgst -sha256 -sign "$JWT_KEY" -binary | b64)
 ID_TOKEN="$H.$P.$SIG"
 
+# Vault login
 LOGIN=$(curl -sS -X POST "$VAULT_ADDR/v1/auth/jenkins-jwt/login" \
   -H 'Content-Type: application/json' \
   -d '{"role":"'"${VAULT_ROLE}"'","jwt":"'"$ID_TOKEN"'"}')
 
 VAULT_TOKEN=$(printf %s "$LOGIN" | jq -r .auth.client_token)
-[ "${VAULT_TOKEN:-}" != "null" ] && [ -n "${VAULT_TOKEN:-}" ] || {
-  echo "Vault login failed"; echo "$LOGIN" | jq .; exit 1; }
+[ -n "${VAULT_TOKEN:-}" ] && [ "${VAULT_TOKEN}" != "null" ] || { echo "Vault login failed"; echo "$LOGIN" | jq .; exit 1; }
 
-# short-lived child token with minimal meta
+# Child token
 REQ=$(jq -n \
   --arg role "${VAULT_ROLE}" \
   --arg job "$JOB" \
@@ -120,13 +121,11 @@ RESP=$(printf "%s" "$REQ" | curl -sS -H "X-Vault-Token: $VAULT_TOKEN" \
   -X POST "$VAULT_ADDR/v1/auth/token/create/jenkins-child" -d @-)
 
 CHILD=$(printf %s "$RESP" | jq -r '.auth.client_token')
-[ "${CHILD:-}" != "null" ] && [ -n "${CHILD:-}" ] || { echo "$RESP" | jq .; exit 1; }
+[ -n "${CHILD:-}" ] && [ "${CHILD}" != "null" ] || { echo "child token create failed"; echo "$RESP" | jq .; exit 1; }
 
-printf "VAULT_TOKEN=%s\n" "$CHILD" > .vault_token
+printf "VAULT_TOKEN=%s\\n" "$CHILD" > .vault_token
 
-if [ "${VERBOSE:-false}" = "true" ]; then
-  echo "login summary:"; echo "$LOGIN" | jq '{policies: .auth.policies, lease_duration: .auth.lease_duration, metadata: .auth.metadata}'
-fi
+[ "${VERBOSE:-false}" = "true" ] && { echo "login summary:"; echo "$LOGIN" | jq '{policies:.auth.policies,lease:.auth.lease_duration,meta:.auth.metadata}'; } || true
 ''')
         }
       }
@@ -140,49 +139,52 @@ set -eu
 
 # map group → project
 case "${SELECTED_GROUP}" in
-  mobile-developers)  PROJECT="mobile-app" ;;
+  mobile-developers)   PROJECT="mobile-app" ;;
   frontend-developers) PROJECT="frontend-app" ;;
-  backend-developers) PROJECT="backend-service" ;;
-  devops-team)        PROJECT="devops-tools" ;;
+  backend-developers)  PROJECT="backend-service" ;;
+  devops-team)         PROJECT="devops-tools" ;;
   *) echo "unknown group ${SELECTED_GROUP}" >&2; exit 1 ;;
 esac
+
+echo "Reading secret for team: ${SELECTED_GROUP}"
+echo "Secret path: kv/data/dev/apps/${PROJECT}/example"
+echo "=================================================="
 
 RESP=$(curl -sS -H "X-Vault-Token: $VAULT_TOKEN" \
   "$VAULT_ADDR/v1/kv/data/dev/apps/${PROJECT}/example")
 
-# print a short, friendly line + the value(s)
-if jq -e '.data.data' >/dev/null 2>&1 <<<'$RESP'; then
-  echo "secret: dev/apps/${PROJECT}/example"
-  jq -r '.data.data' <<<'$RESP'
+# Dash-safe: pipe JSON into jq; avoid jq interpolation syntax that confuses Groovy
+if echo "$RESP" | jq -e '.data.data' >/dev/null 2>&1; then
+  echo "Successfully retrieved secret:"
+  echo "Secret contents:"
+  echo "$RESP" | jq -r '.data.data | to_entries[] | "  " + .key + ": " + (.value | tostring)'
+  echo "=================================================="
+  echo "Proof: ${SELECTED_GROUP} team has access to ${PROJECT} secrets!"
 else
-  echo "failed to read secret for ${PROJECT}"
-  jq . <<<'$RESP'
+  echo "Failed to read secret for ${PROJECT}"
+  echo "$RESP" | jq .
   exit 1
 fi
 ''')
       }
     }
 
-    stage('Boundary check (quiet)') {
+    stage('Boundary check') {
       steps {
         sh(label: 'Deny other project', script: '''
 set -eu
 . ./.vault_token
 
 case "${SELECTED_GROUP}" in
-  mobile-developers)  ALLOWED="mobile-app" ;;
+  mobile-developers)   ALLOWED="mobile-app" ;;
   frontend-developers) ALLOWED="frontend-app" ;;
-  backend-developers) ALLOWED="backend-service" ;;
-  devops-team)        ALLOWED="devops-tools" ;;
+  backend-developers)  ALLOWED="backend-service" ;;
+  devops-team)         ALLOWED="devops-tools" ;;
 esac
 
 ALL="mobile-app frontend-app backend-service devops-tools"
 FORB=""
-for p in $ALL; do
-  [ "$p" = "$ALLOWED" ] || FORB="$FORB $p"
-done
-
-# pick first forbidden (deterministic, less log noise)
+for p in $ALL; do [ "$p" = "$ALLOWED" ] || FORB="$FORB $p"; done
 set -- $FORB
 TEST_PROJECT="$1"
 
@@ -194,7 +196,7 @@ if [ "$CODE" = "403" ] || [ "$CODE" = "404" ]; then
   echo "deny OK for $TEST_PROJECT (HTTP $CODE)"
 else
   echo "unexpected access result for $TEST_PROJECT (HTTP $CODE)"
-  jq . /tmp/deny.json || true
+  [ "${VERBOSE:-false}" = "true" ] && jq . /tmp/deny.json || true
   exit 1
 fi
 ''')
@@ -203,16 +205,15 @@ fi
 
     stage('Summary') {
       steps {
-        sh(label: 'Print summary', script: '''
+        sh(label: 'compact summary', script: '''
 set -eu
 . ./.vault_token
 LOOKUP=$(curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/lookup-self")
 jq -n --arg role "${VAULT_ROLE}" --arg group "${SELECTED_GROUP}" \
-      --arg user "${BUILD_USER_EMAIL}" \
-      --arg job "${JOB_NAME}" \
+      --arg user "${BUILD_USER_EMAIL}" --arg job "${JOB_NAME}" \
       --arg ttl "$(echo "$LOOKUP" | jq -r .data.ttl)" \
       --arg policies "$(echo "$LOOKUP" | jq -cr .data.policies)" \
-      '{role:$role, selected_group:$group, user:$user, job:$job, ttl_seconds:($ttl|tonumber), policies:($policies|fromjson)}'
+      '{role:$role, group:$group, user:$user, job:$job, ttl_s:($ttl|tonumber), policies:($policies|fromjson)}'
 ''')
       }
     }
