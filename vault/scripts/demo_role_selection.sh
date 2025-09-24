@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== Vault Role-Based JWT Authentication Demo ==="
+echo "=== Vault Team-Based JWT Authentication Demo ==="
 echo
+
+# Source environment variables if .env exists
+if [ -f "../../.env" ]; then
+    source "../../.env"
+fi
 
 # Set up environment
 export VAULT_ADDR=http://localhost:8200
+: "${VAULT_TOKEN:?VAULT_TOKEN must be set (source .env file)}"
 
-# Function to create and test a JWT with different role claims
-test_jwt_role() {
-  local role_claim="$1"
+# Function to create and test a JWT with different team claims
+test_jwt_team() {
+  local team_claim="$1"
   local expected_policy="$2"
   local job_name="${3:-test-job}"
   
-  echo "Testing JWT with role='$role_claim'"
+  echo "Testing JWT with selected_group='$team_claim'"
   
-  # Create JWT with the specified role claim
+  # Create JWT with the specified team claim
   jwt_token=$(/Users/trevorrenner/projects/jenkins-vault-poc/.venv/bin/python -c "
 import sys, json, jwt, datetime
 from pathlib import Path
 
 # Create the claims directly
 claims = {
-    'role': '$role_claim',
+    'selected_group': '$team_claim',
     'jenkins_job': '$job_name',
+    'build_id': 'demo-test-' + str(int(datetime.datetime.now().timestamp())),
+    'user': 'demo.user',
     'iss': 'http://localhost:8080',
     'aud': 'vault',
     'env': 'dev',
@@ -42,7 +50,7 @@ print(token)
 ")
 
   # Login with the JWT
-  vault_token=$(vault write -field=token auth/jenkins-jwt/login role="${role_claim}-builds" jwt="$jwt_token")
+  vault_token=$(vault write -field=token auth/jenkins-jwt/login role="$team_claim" jwt="$jwt_token")
   
   if [ -n "$vault_token" ]; then
     echo "Authentication successful!"
@@ -51,24 +59,43 @@ print(token)
     echo "Token info:"
     VAULT_TOKEN="$vault_token" vault token lookup -format=json 2>/dev/null | jq -r '.data | "  Policies: \(.policies | join(", "))\n  TTL: \(.ttl)s\n  Entity ID: \(.entity_id)"' || echo "  (Token info lookup requires additional permissions)"
     
-    # Test access to a secret path
-    echo "Testing access to kv/jobs/$job_name/db-password:"
-    if VAULT_TOKEN="$vault_token" vault kv get kv/jobs/$job_name/db-password 2>/dev/null; then
+    # Test access to team-specific secret path
+    case "$team_claim" in
+      "mobile-developers")
+        test_path="kv/dev/apps/mobile-app/config"
+        write_path="kv/dev/apps/mobile-app/test-secret"
+        ;;
+      "frontend-developers")
+        test_path="kv/dev/apps/frontend-app/config"
+        write_path="kv/dev/apps/frontend-app/test-secret"
+        ;;
+      "backend-developers")
+        test_path="kv/dev/apps/backend-service/config"
+        write_path="kv/dev/apps/backend-service/test-secret"
+        ;;
+      "devops-team")
+        test_path="kv/dev/apps/devops-tools/config"
+        write_path="kv/dev/apps/devops-tools/test-secret"
+        ;;
+    esac
+    
+    echo "Testing access to $test_path:"
+    if VAULT_TOKEN="$vault_token" vault kv get "$test_path" 2>/dev/null; then
       echo "Read access successful"
     else
-      echo "Read access denied"
+      echo "Read access denied (may not exist yet)"
     fi
     
-    # Test write access 
-    echo "Testing write access to kv/jobs/$job_name/test-secret:"
-    if VAULT_TOKEN="$vault_token" vault kv put kv/jobs/$job_name/test-secret value="test-from-$role_claim" 2>/dev/null; then
-      echo " Write access successful"
+    # Test write access to team path
+    echo "Testing write access to $write_path:"
+    if VAULT_TOKEN="$vault_token" vault kv put "$write_path" value="test-from-$team_claim" 2>/dev/null; then
+      echo "Write access successful"
     else
-      echo " Write access denied"
+      echo "Write access denied"
     fi
     
   else
-    echo " Authentication failed!"
+    echo "Authentication failed!"
   fi
   
   echo "----------------------------------------"
@@ -77,22 +104,28 @@ print(token)
 
 # Set up some test data first
 echo "📝 Setting up test data..."
-vault kv put kv/jobs/test-job/db-password password="secret123" >/dev/null 2>&1 || true
+vault kv put kv/dev/apps/mobile-app/config api_key="mobile-secret-123" >/dev/null 2>&1 || true
+vault kv put kv/dev/apps/frontend-app/config api_key="frontend-secret-456" >/dev/null 2>&1 || true
+vault kv put kv/dev/apps/backend-service/config api_key="backend-secret-789" >/dev/null 2>&1 || true
+vault kv put kv/dev/apps/devops-tools/config api_key="devops-secret-000" >/dev/null 2>&1 || true
 echo
 
-# Test each role
-test_jwt_role "admin" "jenkins-admin" "test-job"
-test_jwt_role "developer" "jenkins-developers" "test-job" 
-test_jwt_role "readonly" "jenkins-readonly" "test-job"
+# Test each team
+test_jwt_team "mobile-developers" "mobile-developers" "mobile-app-build"
+test_jwt_team "frontend-developers" "frontend-developers" "frontend-app-build" 
+test_jwt_team "backend-developers" "backend-developers" "backend-service-build"
+test_jwt_team "devops-team" "devops-team" "infrastructure-deploy"
 
 echo "=== Demo Complete ==="
 echo
 echo "Summary:"
-echo "• Admin role: Full CRUD access to all secrets"
-echo "• Developer role: Read/write access to job-scoped secrets"  
-echo "• Readonly role: Read-only access to job-scoped secrets"
+echo "• mobile-developers: Access to mobile app secrets and shared build tools"
+echo "• frontend-developers: Access to frontend secrets and shared build tools"  
+echo "• backend-developers: Access to backend secrets and shared databases"
+echo "• devops-team: Access to infrastructure secrets and all shared resources"
 echo
-echo "To use in Jenkins, set the 'role' claim in your JWT to one of:"
-echo "  - 'admin' for full access"
-echo "  - 'developer' for job-scoped read/write"
-echo "  - 'readonly' for job-scoped read-only"
+echo "To use in Jenkins, set the 'selected_group' claim in your JWT to one of:"
+echo "  - 'mobile-developers' for mobile team access"
+echo "  - 'frontend-developers' for frontend team access"
+echo "  - 'backend-developers' for backend team access"
+echo "  - 'devops-team' for infrastructure/platform access"
