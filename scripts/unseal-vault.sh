@@ -4,10 +4,20 @@
 
 set -euo pipefail
 
-VAULT_KEYS_FILE="${VAULT_KEYS_FILE:-../vault-keys.txt}"
+# Resolve script and repo paths so relative references work regardless of CWD
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Default vault keys file to REPO_ROOT/vault-keys.txt if not provided
+VAULT_KEYS_FILE="${VAULT_KEYS_FILE:-${REPO_ROOT}/vault-keys.txt}"
 VAULT_ADDR="${VAULT_ADDR:-http://localhost:8200}"
 
 echo "Auto-unsealing Vault..."
+
+if [[ ! -f "$VAULT_KEYS_FILE" ]]; then
+  echo "Vault keys file not found: $VAULT_KEYS_FILE" >&2
+  exit 1
+fi
 
 # Extract unseal keys from the keys file
 UNSEAL_KEY_1=$(grep "Unseal Key 1:" "$VAULT_KEYS_FILE" | cut -d' ' -f4)
