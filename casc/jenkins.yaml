@@ -1,0 +1,43 @@
+jenkins:
+  security:
+    authorizationStrategy:
+      "hudson.security.GlobalMatrixAuthorizationStrategy":
+        grantedPermissions:
+          # Trevors admin user
+          - "hudson.model.Hudson.Administer:trevor.renner@ibm.com"
+          # Group: backend-developers
+          - "GROUP:hudson.model.Hudson.Read:backend-developers"
+          - "GROUP:hudson.model.Item.Build:backend-developers"
+          - "GROUP:hudson.model.Item.Cancel:backend-developers"
+          - "GROUP:hudson.model.Item.Discover:backend-developers"
+          - "GROUP:hudson.model.Item.Read:backend-developers"
+          - "GROUP:hudson.model.Item.Workspace:backend-developers"
+          - "GROUP:hudson.model.Run.Replay:backend-developers"
+          - "GROUP:hudson.model.View.Read:backend-developers"
+          # Group: devops-team
+          - "GROUP:hudson.model.Hudson.Read:devops-team"
+          - "GROUP:hudson.model.Item.Build:devops-team"
+          - "GROUP:hudson.model.Item.Cancel:devops-team"
+          - "GROUP:hudson.model.Item.Discover:devops-team"
+          - "GROUP:hudson.model.Item.Read:devops-team"
+          - "GROUP:hudson.model.Item.Workspace:devops-team"
+          - "GROUP:hudson.model.Run.Replay:devops-team"
+          - "GROUP:hudson.model.View.Read:devops-team"
+          # Group: frontend-developers
+          - "GROUP:hudson.model.Hudson.Read:frontend-developers"
+          - "GROUP:hudson.model.Item.Build:frontend-developers"
+          - "GROUP:hudson.model.Item.Cancel:frontend-developers"
+          - "GROUP:hudson.model.Item.Discover:frontend-developers"
+          - "GROUP:hudson.model.Item.Read:frontend-developers"
+          - "GROUP:hudson.model.Item.Workspace:frontend-developers"
+          - "GROUP:hudson.model.Run.Replay:frontend-developers"
+          - "GROUP:hudson.model.View.Read:frontend-developers"
+          # Group: mobile-developers
+          - "GROUP:hudson.model.Hudson.Read:mobile-developers"
+          - "GROUP:hudson.model.Item.Build:mobile-developers"
+          - "GROUP:hudson.model.Item.Cancel:mobile-developers"
+          - "GROUP:hudson.model.Item.Discover:mobile-developers"
+          - "GROUP:hudson.model.Item.Read:mobile-developers"
+          - "GROUP:hudson.model.Item.Workspace:mobile-developers"
+          - "GROUP:hudson.model.Run.Replay:mobile-developers"
+          - "GROUP:hudson.model.View.Read:mobile-developers"
