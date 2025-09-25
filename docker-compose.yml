@@ -27,6 +27,7 @@ services:
     environment:
       JENKINS_OPTS: "--prefix=/"
       JENKINS_URL: "http://jenkins:8080/"
+      DISABLE_AUTH_SEED: "true"
     volumes:
       - ./data/jenkins_home:/var/jenkins_home
     restart: unless-stopped
