@@ -3,10 +3,57 @@
 # Creates or updates all secrets used by the team-based authentication system
 set -euo pipefail
 
-: "${VAULT_ADDR:?set VAULT_ADDR}"
-: "${VAULT_TOKEN:?set VAULT_TOKEN}"
+## Load environment variables from a .env file (search multiple likely locations)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_PATHS=("${PWD}/.env" "${SCRIPT_DIR}/.env" "${SCRIPT_DIR}/../.env")
+FOUND_ENV=""
+for p in "${ENV_PATHS[@]}"; do
+  if [[ -f "$p" ]]; then
+    FOUND_ENV="$p"
+    break
+  fi
+done
 
-echo "🌱 Seeding secrets for Jenkins-Vault POC..."
+if [[ -n "$FOUND_ENV" ]]; then
+  echo "Loading environment variables from $FOUND_ENV"
+  # Source and export variables from the env file (ignore comments and empty lines)
+  set -a
+  # shellcheck disable=SC1090
+  source "$FOUND_ENV"
+  set +a
+  # Explicitly export key variables for parent shell
+  export VAULT_ADDR VAULT_TOKEN
+else
+  echo "WARNING: No .env file found in expected locations. Please ensure environment variables are set."
+fi
+
+# Set default VAULT_ADDR if not set
+if [[ -z "${VAULT_ADDR:-}" ]]; then
+    echo "Setting default VAULT_ADDR=http://localhost:8200"
+    export VAULT_ADDR="http://localhost:8200"
+fi
+
+# Resolve repo root and extract root token from vault-keys.txt if needed
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VAULT_KEYS_FILE="${VAULT_KEYS_FILE:-$REPO_ROOT/vault-keys.txt}"
+
+# Extract root token from vault-keys.txt (prioritize over .env file)
+if [[ -f "$VAULT_KEYS_FILE" ]]; then
+    echo "Extracting root token from $VAULT_KEYS_FILE..."
+    ROOT_TOKEN=$(grep "Initial Root Token:" "$VAULT_KEYS_FILE" | awk '{print $4}')
+    if [[ -n "$ROOT_TOKEN" ]]; then
+        export VAULT_TOKEN="$ROOT_TOKEN"
+        echo "Vault token set from vault-keys.txt"
+    else
+        echo "ERROR: Could not extract root token from $VAULT_KEYS_FILE"
+        exit 1
+    fi
+elif [[ -z "${VAULT_TOKEN:-}" ]]; then
+    echo "ERROR: No VAULT_TOKEN set and no vault-keys.txt file found"
+    exit 1
+fi
+
+echo "Seeding secrets for Jenkins-Vault POC..."
 
 # Core team application secrets (used by Jenkins pipeline)
 echo "Creating team application secrets..."
@@ -82,11 +129,11 @@ vault kv put kv/dev/apps/team-frontend-team-pipeline/legacy \
   purpose="bazel-demo-compatibility"
 
 echo ""
-echo "✅ All secrets seeded successfully!"
+echo "All secrets seeded successfully!"
 echo ""
-echo "📋 Summary:"
+echo "Summary:"
 echo "   Core team apps: mobile-app, frontend-app, backend-service, devops-tools"
 echo "   Legacy paths: team-*-team-pipeline (Bazel compatibility)"
 echo "   Total paths: $(vault kv list kv/dev/apps | wc -l) application directories"
 echo ""
-echo "🎯 Ready for Jenkins pipeline and team-based authentication demos!"
+echo "Ready for Jenkins pipeline and team-based authentication demos!"
