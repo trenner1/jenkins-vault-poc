@@ -1,6 +1,45 @@
 # Jenkins ↔ Vault JWT Authentication POC (with Okta Integration)
 
-A production-ready proof of concept demonstrating **team-based JWT authentication** b### JWT Authentication Flow
+A production-ready proof of concept demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **logical workload grouping** and **Okta SSO integration**.
+
+## Quick Start (One Command!)
+
+**Complete zero-to-running setup:**
+```bash
+./scripts/start.sh
+```
+
+This single command:
+- Creates vault.hcl configuration automatically
+- Starts Docker containers (Jenkins + Vault)
+- Auto-bootstraps fresh Vault if needed (generates keys)
+- Auto-unseals Vault with generated keys
+- Synchronizes tokens between vault-keys.txt and .env
+- Ready for team authentication and secret access
+
+**Complete setup and testing:**
+```bash
+# 1. Start everything (auto-bootstrap if fresh)
+./scripts/start.sh
+
+# 2. Configure JWT authentication + team policies  
+./scripts/setup_vault.sh
+
+# 3. Populate team-specific test secrets
+./scripts/seed_secret.sh
+
+# 4. Test JWT authentication (example: mobile team)
+JWT_TOKEN=$(./scripts/sign_jwt.sh mobile-developers)
+source .env  # Load VAULT_ADDR
+vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="${JWT_TOKEN}"
+# Copy the returned token and set: export VAULT_TOKEN="hvs.CAESxxx..."
+vault kv get kv/dev/apps/mobile-app/example  # Should work
+vault kv get kv/dev/apps/backend-service/example  # Should fail (403)
+```
+
+**Results**: Complete team-based JWT authentication with verified secret isolation in under 2 minutes!
+
+### JWT Authentication Flow
 
 **Jenkins-Vault Team-Based Authentication:**
 
