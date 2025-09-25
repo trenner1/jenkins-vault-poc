@@ -47,7 +47,9 @@ sequenceDiagram
     Note over Jenkins,Secrets: Result: Team isolation with no entity churning
 ```
 
-**For detailed JWT claims, policies, and implementation → See [ROLE_BASED_AUTH.md](ROLE_BASED_AUTH.md)**enkins and HashiCorp Vault with **logical workload grouping** and **Okta SSO integration**.
+**For detailed JWT claims, policies, and implementation → See [ROLE_BASED_AUTH.md](ROLE_BASED_AUTH.md)**
+
+---
 
 ## What This POC Proves
 
