@@ -1,78 +1,261 @@
-# Vault Team-Based JWT Authentication
+# Vault Team-Based JWT Authen## Comprehensive Testing & Verification
 
-This setup provides team-based authentication for Jenkins pipelines using JWT tokens with different team access levels.
+### Manual JWT Authentication Testnical Reference
 
-## Overview
+This document provides **detailed technical implementation** of the team-based JWT authentication system. 
 
-The system supports four team types, each with different permissions:
+**For setup and overview → See [README.md](README.md)**
 
-1. **mobile-developers** - Access to mobile app secrets (iOS/Android builds, app store credentials)
-2. **frontend-developers** - Access to frontend secrets (build tools, CDN credentials, web assets)
-3. **backend-developers** - Access to backend secrets (databases, APIs, service credentials)
-4. **devops-team** - Access to infrastructure secrets (cloud resources, monitoring, CI/CD)
+## Technical Architecturem-Based JWT Authentication (Enhanced Setup)
 
-## How It Works
+This setup provides **streamlined team-based authentication** for Jenkins pipelines using JWT tokens with comprehensive automation and testing.
 
-### JWT Claims
-When creating a JWT token for Vault authentication, include a `selected_group` claim:
+## Enhanced Features
 
+- **One-Command Setup**: Complete automation from zero to working system
+- **Self-Contained Scripts**: Automatic environment handling and token management  
+- **Comprehensive Testing**: End-to-end verification of JWT authentication flow
+- **Team Isolation Verification**: Proven cross-team access prevention
+- **Production-Ready**: Persistent storage, auto-unseal, proper security
+
+## Team Structure
+
+The system supports four team types, each with isolated secret access:
+
+| Team | Role | Secret Paths | Use Case |
+|------|------|-------------|----------|
+| **mobile-developers** | `mobile-developers-builds` | `kv/dev/apps/mobile-app/*` | iOS/Android builds, app store credentials |
+| **frontend-developers** | `frontend-developers-builds` | `kv/dev/apps/frontend-app/*` | Web builds, CDN credentials, static assets |
+| **backend-developers** | `backend-developers-builds` | `kv/dev/apps/backend-service/*` | Databases, APIs, service credentials |
+| **devops-team** | `devops-team-builds` | `kv/dev/apps/devops-tools/*` | Infrastructure, monitoring, CI/CD tools |
+
+## Complete Setup & Testing
+
+### 1. Full Environment Setup
+```bash
+# Start everything with auto-bootstrap
+./scripts/start.sh
+
+# Configure JWT authentication and team policies  
+./scripts/setup_vault.sh
+
+# Populate team-specific test secrets
+./scripts/seed_secret.sh
+```
+
+### 2. Test JWT Authentication Flow
+```bash
+### Manual JWT Authentication Test
+
+**Complete step-by-step authentication flow:**
+
+```bash
+# Load environment
+source .env
+
+# Generate JWT for mobile team
+JWT_TOKEN=$(./scripts/sign_jwt.sh mobile-developers)
+
+# Authenticate with Vault
+vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="${JWT_TOKEN}"
+# Returns: token hvs.CAESxxxxx...
+
+# Use team token
+export VAULT_TOKEN="hvs.CAESxxxxx..."
+
+# Test team access (should work)
+vault kv get kv/dev/apps/mobile-app/example
+
+# Test isolation (should fail with 403)
+vault kv get kv/dev/apps/backend-service/example
+```
+
+### Multi-Team Testing Script
+
+```bash
+# Test all teams systematically
+for team in mobile-developers frontend-developers backend-developers devops-team; do
+    echo "=== Testing $team ==="
+    JWT=$(./scripts/sign_jwt.sh "$team")
+    echo "Generated JWT for $team"
+    # Use JWT for authentication testing...
+done
+```
+
+### Automated Verification Scripts
+
+**The system includes comprehensive verification:**
+
+```bash
+# Verify no entity churning occurs
+./verification/verify-no-churn.sh
+
+# Demo team entity management
+./verification/demo-team-entities.sh
+
+# Complete team access demonstration
+./verification/comprehensive-team-demo.sh
+```
+
+**These scripts verify:**
+1. **No Entity Churning**: Same entity/alias reused within teams
+2. **Team Isolation**: Teams cannot access other team secrets  
+3. **JWT Authentication**: Complete authentication flow works
+4. **Policy Enforcement**: Vault policies properly restrict access
+
+## JWT Technical Implementation
+
+### Enhanced JWT Claims Structure
 ```json
 {
-  "iss": "http://localhost:8080",
-  "aud": "vault",
-  "env": "dev",
-  "selected_group": "backend-developers",  // ← This determines team access level
-  "jenkins_job": "user-api-build",
-  "build_id": "build-123",
-  "user": "alice.smith",
-  "iat": 1234567890,
-  "exp": 1234568490
+  "iss": "http://localhost:8080",           // Jenkins issuer
+  "aud": "vault",                           // Vault audience  
+  "env": "dev",                             // Environment (REQUIRED)
+  "selected_group": "mobile-developers",    // Team identifier
+  "jenkins_job": "mobile-app-build",        // Pipeline name
+  "build_id": "build-123",                  // Build identifier
+  "user": "cli@example.com",                // User context
+  "iat": 1234567890,                        // Issued at
+  "exp": 1234568490                         // Expires (15 min)
 }
 ```
 
-### Vault Roles
-The JWT `selected_group` claim maps to these Vault authentication roles:
-- `selected_group: "mobile-developers"` → authenticates to `mobile-developers` role → gets `mobile-developers` policy
-- `selected_group: "frontend-developers"` → authenticates to `frontend-developers` role → gets `frontend-developers` policy
-- `selected_group: "backend-developers"` → authenticates to `backend-developers` role → gets `backend-developers` policy
-- `selected_group: "devops-team"` → authenticates to `devops-team` role → gets `devops-team` policy
+**Key Enhancement**: The `env: "dev"` claim is **required** and must match the Vault role configuration.
 
-### Access Patterns
+### Vault Authentication Mapping
 
-#### Mobile Developers Policy (`mobile-developers` policy)
-```hcl
-# Access to mobile-specific secrets
-path "kv/data/mobile/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/data/shared/build-tools/*" { capabilities = ["read"] }
-path "kv/metadata/mobile/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/metadata/shared/build-tools/*" { capabilities = ["read", "list"] }
+**JWT → Vault Role → Policy → Secret Access:**
+
+| JWT Claim | Vault Role | Policy Applied | Secret Access |
+|-----------|------------|----------------|---------------|
+| `selected_group: "mobile-developers"` | `mobile-developers-builds` | `mobile-developers` | `kv/dev/apps/mobile-app/*` |
+| `selected_group: "frontend-developers"` | `frontend-developers-builds` | `frontend-developers` | `kv/dev/apps/frontend-app/*` |
+| `selected_group: "backend-developers"` | `backend-developers-builds` | `backend-developers` | `kv/dev/apps/backend-service/*` |
+| `selected_group: "devops-team"` | `devops-team-builds` | `devops-team` | `kv/dev/apps/devops-tools/*` |
+
+### Authentication Command Syntax
+
+**Correct Authentication Method:**
+```bash
+# Use 'vault write' NOT 'vault login' for JWT auth
+vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="${JWT_TOKEN}"
 ```
 
-#### Frontend Developers Policy (`frontend-developers` policy)  
+**Why not `vault login`?**
+- `vault login -method=jwt` expects interactive input
+- `vault write` allows direct JWT parameter passing
+- Our JWT auth is mounted at custom path `jenkins-jwt/`
+
+### Team Policy Details
+
+**Current Implementation (as configured by setup_vault.sh):**
+
+#### Mobile Developers Policy
 ```hcl
-# Access to frontend-specific secrets
-path "kv/data/frontend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/data/shared/build-tools/*" { capabilities = ["read"] }
-path "kv/metadata/frontend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/metadata/shared/build-tools/*" { capabilities = ["read", "list"] }
+# Team-specific secret access
+path "kv/data/dev/apps/mobile-app/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/mobile-app/*" {
+    capabilities = ["read", "list"]
+}
+
+# Legacy compatibility paths
+path "kv/data/dev/apps/team-mobile-team-pipeline/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/team-mobile-team-pipeline/*" {
+    capabilities = ["read", "list"]
+}
 ```
 
-#### Backend Developers Policy (`backend-developers` policy)
+#### Frontend Developers Policy  
 ```hcl
-# Access to backend-specific secrets
-path "kv/data/backend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/data/shared/databases/*" { capabilities = ["read"] }
-path "kv/metadata/backend/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/metadata/shared/databases/*" { capabilities = ["read", "list"] }
+# Team-specific secret access
+path "kv/data/dev/apps/frontend-app/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/frontend-app/*" {
+    capabilities = ["read", "list"]
+}
+
+# Legacy compatibility paths
+path "kv/data/dev/apps/team-frontend-team-pipeline/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/team-frontend-team-pipeline/*" {
+    capabilities = ["read", "list"]
+}
 ```
 
-#### DevOps Team Policy (`devops-team` policy)
+#### Backend Developers Policy
 ```hcl
-# Access to infrastructure and shared secrets
-path "kv/data/devops/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/data/shared/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/metadata/devops/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "kv/metadata/shared/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+# Team-specific secret access
+path "kv/data/dev/apps/backend-service/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/backend-service/*" {
+    capabilities = ["read", "list"]
+}
+
+# Legacy compatibility paths
+path "kv/data/dev/apps/team-backend-team-pipeline/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/team-backend-team-pipeline/*" {
+    capabilities = ["read", "list"]
+}
+```
+
+#### DevOps Team Policy
+```hcl
+# Team-specific secret access
+path "kv/data/dev/apps/devops-tools/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/devops-tools/*" {
+    capabilities = ["read", "list"]
+}
+
+# Cross-team read access (DevOps can read all team secrets)
+path "kv/data/dev/apps/*" {
+    capabilities = ["read"]
+}
+path "kv/metadata/dev/apps/*" {
+    capabilities = ["read", "list"]
+}
+```
+
+### Entity Lifecycle & No-Churn Verification
+
+**How Team Entities Work:**
+```
+1. First JWT auth with selected_group="mobile-developers"
+   → Creates entity: mobile-developers
+   → Creates alias with team metadata
+
+2. Second JWT auth with same selected_group="mobile-developers"  
+   → Reuses SAME entity (no churn!)
+   → Updates alias metadata with new JWT claims
+
+3. Different team JWT auth with selected_group="backend-developers"
+   → Creates DIFFERENT entity: backend-developers
+   → Separate entity per team (logical grouping)
+```
+
+**Verification Commands:**
+```bash
+# Check current entities before auth
+vault auth list -detailed
+vault list identity/entity/name
+
+# Perform auth, check entities again
+vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="$JWT"
+vault list identity/entity/name  # Should show same count + mobile-developers
+
+# Auth again with same team
+vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="$JWT2"  
+vault list identity/entity/name  # Count should NOT increase (no churn!)
 ```
 
 ## Usage in Jenkins

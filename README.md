@@ -1,6 +1,53 @@
 # Jenkins ↔ Vault JWT Authentication POC (with Okta Integration)
 
-A production-ready proof of concept demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **logical workload grouping** and **Okta SSO integration**.
+A production-ready proof of concept demonstrating **team-based JWT authentication** b### JWT Authentication Flow
+
+**Jenkins-Vault Team-Based Authentication:**
+
+```mermaid
+sequenceDiagram
+    participant Jenkins as Jenkins Pipeline
+    participant JWT as JWT Generator
+    participant Vault as HashiCorp Vault
+    participant Policies as Team Policies
+    participant Secrets as Team Secrets
+
+    Note over Jenkins,Secrets: Self-Signed JWT Team Authentication
+
+    Jenkins->>Jenkins: Determine team context<br/>(mobile/frontend/backend/devops)
+    Jenkins->>JWT: Generate RSA-signed JWT
+    Note right of JWT: Claims include:<br/>selected_group: "mobile-developers"<br/>env: "dev"<br/>jenkins_job: "mobile-app-build"
+    
+    JWT->>Jenkins: Return signed JWT token
+    Jenkins->>Vault: POST auth/jenkins-jwt/login<br/>role=mobile-developers-builds<br/>jwt=eyJhbGci...
+    
+    Vault->>Vault: Verify JWT signature<br/>(public key validation)
+    Vault->>Vault: Check role bindings<br/>(selected_group → role mapping)
+    
+    alt Entity Exists
+        Vault->>Vault: Reuse existing team entity<br/>(no churning)
+    else New Team
+        Vault->>Vault: Create team entity + alias<br/>(logical grouping)
+    end
+    
+    Vault->>Policies: Apply team policy<br/>(mobile-developers policy)
+    Vault-->>Jenkins: Team-scoped Vault token<br/>(hvs.CAESxxx...)
+    
+    Jenkins->>Jenkins: Export VAULT_TOKEN
+    Jenkins->>Vault: Access team secrets<br/>kv/dev/apps/mobile-app/*
+    
+    Vault->>Policies: Check team permissions
+    alt Team Access Allowed
+        Policies->>Secrets: Retrieve mobile-app secrets
+        Secrets-->>Jenkins: Secret values
+    else Cross-Team Access
+        Policies-->>Jenkins: 403 Permission Denied
+    end
+    
+    Note over Jenkins,Secrets: Result: Team isolation with no entity churning
+```
+
+**For detailed JWT claims, policies, and implementation → See [ROLE_BASED_AUTH.md](ROLE_BASED_AUTH.md)**enkins and HashiCorp Vault with **logical workload grouping** and **Okta SSO integration**.
 
 ## What This POC Proves
 
@@ -53,14 +100,28 @@ DevOps Team         →  Entity: devops-team            →  Secrets: kv/dev/app
 
 ## Quick Start
 
-### Start Everything
+### One-Command Setup (From Zero to Running!)
 ```bash
 ./scripts/start.sh
 ```
-This will:
-- Start Docker containers (Jenkins + Vault)
-- Auto-unseal Vault with stored keys
-- Show status and access URLs
+**This single command handles everything automatically:**
+- Creates Vault configuration (`vault.hcl`) if missing
+- Starts Docker containers (Jenkins + Vault)
+- Auto-bootstraps Vault if uninitialized (generates `vault-keys.txt`)
+- Auto-unseals Vault with generated keys
+- Updates `.env` file with current tokens
+- Shows status and access URLs
+
+**Perfect for:** Fresh clones, clean environments, complete rebuilds
+
+### Setup Team Authentication & Secrets
+```bash
+# Configure JWT auth, policies, and team roles
+./scripts/setup_vault.sh
+
+# Populate team-specific test secrets
+./scripts/seed_secret.sh
+```
 
 ### Stop Everything  
 ```bash
@@ -68,9 +129,13 @@ This will:
 ```
 Data is preserved in `./data/` directory.
 
-### Manual Vault Unseal (if needed)
+### Test JWT Authentication
 ```bash
-./scripts/unseal-vault.sh
+# Create JWT for any team and test authentication
+./scripts/sign_jwt.sh mobile-developers
+./scripts/sign_jwt.sh backend-developers
+./scripts/sign_jwt.sh frontend-developers
+./scripts/sign_jwt.sh devops-team
 ```
 
 ## Access URLs
@@ -123,37 +188,22 @@ The verification scripts:
 
 ## Configuration Details
 
-### JWT Claims Structure
-```json
-{
-  "iss": "http://localhost:8080",       // Jenkins issuer
-  "aud": "vault",                       // Vault audience
-  "env": "dev",                         // Environment
-  "selected_group": "mobile-developers"|"frontend-developers"|"backend-developers"|"devops-team", // Team identifier
-  "jenkins_job": "sample-pipeline",     // Pipeline name (optional)
-  "iat": 1234567890,                    // Issued at
-  "nbf": 1234567890,                    // Not before
-  "exp": 1234568790                     // Expires
-}
+### Team → Secret Mapping
+```
+Mobile Team      → kv/dev/apps/mobile-app/*      → iOS/Android builds, app credentials
+Frontend Team    → kv/dev/apps/frontend-app/*    → Web builds, CDN, static assets  
+Backend Team     → kv/dev/apps/backend-service/* → Databases, APIs, services
+DevOps Team      → kv/dev/apps/devops-tools/*    → Infrastructure, monitoring, CI/CD
 ```
 
-### Policy Templating
-```hcl
-# Dynamic path based on pipeline name
-path "kv/data/dev/apps/{{identity.entity.aliases.auth_jwt_5f35b701.metadata.job}}/*" {
-  capabilities = ["read"]
-}
+### JWT Authentication Flow
+```
+1. Jenkins generates JWT with team claim (selected_group)
+2. JWT → Vault authentication → Team-scoped token
+3. Team token → Access team secrets (other teams blocked with 403)
 ```
 
-**Result**: `jenkins_job: "sample-pipeline"` → Access to `kv/data/dev/apps/sample-pipeline/*`
-
-### Entity Lifecycle
-```
-1. First team login      → Entity created with team-based alias
-2. Same team member      → Same entity reused, alias metadata updated  
-3. Different team login  → New team entity created (if using different team)
-4. No churning          → Entity/alias IDs remain stable within teams
-```
+**For detailed JWT claims, policies, and implementation → See [ROLE_BASED_AUTH.md](ROLE_BASED_AUTH.md)**
 
 ---
 
@@ -183,34 +233,120 @@ devops-team → selected_group → devops-team → DevOps + Shared secrets
 
 ---
 
+## Testing & Verification
+
+### End-to-End Authentication Test
+
+**Quick verification that the system works:**
+
+```bash
+# 1. Load environment and generate JWT
+source .env
+JWT_TOKEN=$(./scripts/sign_jwt.sh mobile-developers)
+
+# 2. Authenticate to get team token  
+vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="${JWT_TOKEN}"
+
+# 3. Use team token to access secrets
+export VAULT_TOKEN="hvs.CAESxxxxx..."  # From step 2
+vault kv get kv/dev/apps/mobile-app/example    # Works
+vault kv get kv/dev/apps/backend-service/example  # 403 (isolated)
+```
+
+**For complete testing procedures → See [ROLE_BASED_AUTH.md](ROLE_BASED_AUTH.md)**
+
+### Comprehensive Verification Scripts
+
+```bash
+# Run comprehensive verification test
+./verification/verify-no-churn.sh
+
+# Show team-based entity management concepts
+./verification/demo-team-entities.sh
+
+# Complete team access demonstration  
+./verification/comprehensive-team-demo.sh
+```
+
+**These scripts verify:**
+1. **No Entity Churning**: Same entity/alias reused within teams
+2. **Team Isolation**: Teams cannot access other team secrets
+3. **JWT Authentication**: Complete authentication flow works
+4. **Policy Enforcement**: Vault policies properly restrict access
+
+---
+
+## Jenkins Configuration & Integration
+
+### Jenkins Bootstrap (Fresh Installs Only)
+
+**WARNING**: Only run on fresh Jenkins instances! This will overwrite existing configuration.
+
+```bash
+./scripts/bootstrap-jenkins.sh
+```
+
+**This script configures:**
+- **Emergency Admin User**: Local admin for fallback access
+- **Team-Based Permissions**: Global matrix authorization matching CASC
+- **Group Permissions**: All teams get proper build/read/workspace access
+- **Security Settings**: CSRF protection, setup wizard disabled
+
+### Production Jenkins Integration
+
+**For production Jenkins with existing OIDC/JWT configuration:**
+
+1. **Manual Setup Required**: Don't run bootstrap script on configured instances
+2. **Use CASC Configuration**: Deploy via `casc/jenkins.yaml`
+3. **Vault Plugin Setup**: Install HashiCorp Vault plugin
+4. **JWT Verification**: Configure JWT verification with public key from `keys/jenkins-oidc.pub`
+
+### Team Permission Structure
+
+The system configures these permissions for each team:
+
+| Team | Permissions |
+|------|-------------|
+| **mobile-developers** | Read, Build, Cancel, Discover, Workspace, Replay, View |
+| **frontend-developers** | Read, Build, Cancel, Discover, Workspace, Replay, View |
+| **backend-developers** | Read, Build, Cancel, Discover, Workspace, Replay, View | 
+| **devops-team** | Read, Build, Cancel, Discover, Workspace, Replay, View |
+
+**Admin Users**: Full `Hudson.ADMINISTER` permissions
+
+---
+
 ## Manual Setup (for reference)
+
+> **Recommended:** Use `./scripts/start.sh` for automatic setup instead!
 
 ### 1) Start Containers
 ```bash
 docker compose up -d
 ```
 
-### 2) Initialize Vault (first time only)
+### 2) Bootstrap Vault (automated)
 ```bash
-# Initialize and get unseal keys + root token
-docker exec vault vault operator init
-
-# Unseal with 3 of 5 keys
-docker exec vault vault operator unseal <key1>
-docker exec vault vault operator unseal <key2>
-docker exec vault vault operator unseal <key3>
+# Creates vault-keys.txt, initializes & unseals Vault, updates .env
+./scripts/bootstrap-vault.sh
 ```
 
-### 3) Configure Vault
+### 3) Configure Vault Authentication & Policies  
 ```bash
-export VAULT_ADDR="http://localhost:8200"
-export VAULT_TOKEN="<your-root-token-from-vault-keys.txt>"
+# Sets up JWT auth, team roles, and policies
+./scripts/setup_vault.sh
 
-# Run setup script
-cd vault/scripts && ./setup_vault.sh
+# Populates team-specific test secrets
+./scripts/seed_secret.sh
+```
 
-# Seed test secrets
-./seed_secret.sh
+### 4) Manual Vault Operations (if needed)
+```bash
+# Manual initialization (only if bootstrap script not used)
+docker exec vault vault operator init
+
+# Manual unseal (only if needed)
+./scripts/unseal-vault.sh
 ```
 
 ### 4) Get Jenkins Admin Password
@@ -283,10 +419,14 @@ jenkins-vault-poc/
 │   ├── jenkins-oidc.key        # Private key (WARNING: Keep secure!)
 │   └── jenkins-oidc.pub        # Public key
 │
-├── scripts/                    # Infrastructure automation
-│   ├── start.sh                # Start & unseal everything
-│   ├── stop.sh                 # Graceful shutdown
-│   └── unseal-vault.sh         # Auto-unseal utility
+├── scripts/                    # Main operation scripts (🚀 Enhanced!)
+│   ├── start.sh                # Start containers with auto-bootstrap & vault.hcl creation
+│   ├── stop.sh                 # Stop containers
+│   ├── bootstrap-vault.sh      # Initialize fresh Vault + generate keys + update .env
+│   ├── unseal-vault.sh         # Unseal Vault with keys
+│   ├── setup_vault.sh          # Configure JWT auth + team setup (self-contained)
+│   ├── seed_secret.sh          # Populate team-specific test secrets (self-contained)
+│   └── sign_jwt.sh             # JWT signing utility (with env:dev claim)
 │
 ├── vault/                      # Vault configuration
 │   ├── config/vault.hcl        # Production Vault config
@@ -296,9 +436,7 @@ jenkins-vault-poc/
 │   │   ├── backend-developers.hcl
 │   │   └── devops-team.hcl
 │   └── scripts/
-│       ├── setup_vault.sh      # Configure JWT auth + team setup
-│       ├── demo_role_based_auth.sh  # Team authentication demo
-│       └── seed_secret.sh      # Populate team-specific test secrets
+│       └── demo_role_based_auth.sh  # Team authentication demo
 │
 ├── pipelines/                  # Example pipelines
 │   └── Jenkinsfile.role-selection  # Team-based role selection example
