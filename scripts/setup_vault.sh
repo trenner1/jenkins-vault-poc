@@ -130,9 +130,9 @@ for team in mobile-developers frontend-developers backend-developers devops-team
 done
 vault policy write jenkins-dev "$POLICY_DIR/jenkins-dev.hcl"  # Keep for job-scoped access
 
-# 4) Create team-based roles
+# 4) Create team-based roles (matching Okta group names)
 for team in mobile-developers frontend-developers backend-developers devops-team; do
-vault write auth/jenkins-jwt/role/${team}-builds -<<JSON
+vault write auth/jenkins-jwt/role/${team} -<<JSON
 {
   "role_type": "jwt",
   "user_claim": "selected_group",

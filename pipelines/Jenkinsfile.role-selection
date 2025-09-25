@@ -44,7 +44,6 @@ pipeline {
     stage('Choose role') {
       steps {
         script {
-          def roleMap = [:] // e.g. ['frontend-developers':'role-frontend']
           def eligible = env.ELIGIBLE_GROUPS_NL.readLines().findAll { it?.trim() }
           def chosen = eligible.size() == 1 ? eligible[0] : input(
             id: 'chooseRole',
@@ -53,7 +52,7 @@ pipeline {
           ) as String
 
           env.SELECTED_GROUP = chosen
-          env.VAULT_ROLE     = roleMap.get(chosen, chosen)
+          env.VAULT_ROLE     = chosen  // Use Okta group name directly
           echo "role: ${env.VAULT_ROLE}"
         }
       }
