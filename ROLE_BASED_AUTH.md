@@ -16,7 +16,7 @@ This setup provides **streamlined team-based authentication** for Jenkins pipeli
 - **Self-Contained Scripts**: Automatic environment handling and token management  
 - **Comprehensive Testing**: End-to-end verification of JWT authentication flow
 - **Team Isolation Verification**: Proven cross-team access prevention
-- **Production-Ready**: Persistent storage, auto-unseal, proper security
+- **Robust Implementation**: Persistent storage, auto-unseal, proper security
 
 ## Team Structure
 

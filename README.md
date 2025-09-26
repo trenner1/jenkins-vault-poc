@@ -1,6 +1,6 @@
 # Jenkins ↔ Vault JWT Authentication POC (with Okta Integration)
 
-A production-ready proof of concept demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **logical workload grouping** and **Okta SSO integration**.
+A comprehensive simulation demonstrating **team-based JWT authentication** between Jenkins and HashiCorp Vault with **logical workload grouping** and **Okta SSO integration**.
 
 ## Quick Start (One Command!)
 
@@ -94,7 +94,7 @@ sequenceDiagram
 
 - **Zero Entity Churning**: Same entity/alias reused across team member logins  
 - **Logical Grouping**: Entity count scales with teams, organizing identical workloads efficiently  
-- **Production Ready**: Raft storage, proper policies, automation, persistence  
+- **Comprehensive Setup**: Raft storage, proper policies, automation, persistence  
 - **Secure**: Job-scoped access with dynamic policy templating  
 - **Scalable**: Supports large monorepos with multiple development teams  
 
@@ -107,7 +107,7 @@ sequenceDiagram
 - **No Entity Churning**: Proven entity/alias reuse within teams
 - **Job-Scoped Secrets**: Dynamic policy templating based on pipeline context
 - **Persistent Data**: Survives container restarts with auto-unseal
-- **Production Ready**: Raft storage, proper policies, automation scripts
+- **Comprehensive Setup**: Raft storage, proper policies, automation scripts
 
 ## Architecture Overview
 
@@ -250,7 +250,7 @@ DevOps Team      → kv/dev/apps/devops-tools/*    → Infrastructure, monitorin
 
 ## Okta Integration
 
-This POC includes comprehensive **Okta SSO integration** for production-ready team-based authentication:
+This POC includes comprehensive **Okta SSO integration** for realistic team-based authentication scenarios:
 
 ### Integration Documentation
 - **[Okta-Vault Integration Guide](okta/okta-vault-integration.md)** - Complete setup for Vault ↔ Okta integration
