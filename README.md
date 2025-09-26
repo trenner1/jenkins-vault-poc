@@ -31,7 +31,7 @@ This single command:
 # 4. Test JWT authentication (example: mobile team)
 JWT_TOKEN=$(./scripts/sign_jwt.sh mobile-developers)
 source .env  # Load VAULT_ADDR
-vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="${JWT_TOKEN}"
+vault write auth/jenkins-jwt/login role=mobile-developers jwt="${JWT_TOKEN}"
 # Copy the returned token and set: export VAULT_TOKEN="hvs.CAESxxx..."
 vault kv get kv/dev/apps/mobile-app/example  # Should work
 vault kv get kv/dev/apps/backend-service/example  # Should fail (403)
@@ -58,7 +58,7 @@ sequenceDiagram
     Note right of JWT: Claims include:<br/>selected_group: "mobile-developers"<br/>env: "dev"<br/>jenkins_job: "mobile-app-build"
     
     JWT->>Jenkins: Return signed JWT token
-    Jenkins->>Vault: POST auth/jenkins-jwt/login<br/>role=mobile-developers-builds<br/>jwt=eyJhbGci...
+    Jenkins->>Vault: POST auth/jenkins-jwt/login<br/>role=mobile-developers<br/>jwt=eyJhbGci...
     
     Vault->>Vault: Verify JWT signature<br/>(public key validation)
     Vault->>Vault: Check role bindings<br/>(selected_group → role mapping)
@@ -286,7 +286,7 @@ source .env
 JWT_TOKEN=$(./scripts/sign_jwt.sh mobile-developers)
 
 # 2. Authenticate to get team token  
-vault write auth/jenkins-jwt/login role=mobile-developers-builds jwt="${JWT_TOKEN}"
+vault write auth/jenkins-jwt/login role=mobile-developers jwt="${JWT_TOKEN}"
 
 # 3. Use team token to access secrets
 export VAULT_TOKEN="hvs.CAESxxxxx..."  # From step 2
